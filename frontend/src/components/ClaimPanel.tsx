@@ -1,12 +1,13 @@
 "use client";
 
-import { HandHelping, Info, LockKeyhole, PackageCheck } from "lucide-react";
+import { Clock, HandHelping, Info, LockKeyhole, PackageCheck, XCircle } from "lucide-react";
 import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { canEdit, isStaffFor, useApp } from "@/lib/app-context";
 import { branchName } from "@/lib/branches";
 import { useNotifications } from "@/lib/notifications";
-import type { Claim, Item } from "@/lib/types";
+import { timeAgo } from "@/lib/format";
+import type { Claim, Item, QueuedClaim, QueuedResponse } from "@/lib/types";
 import ClaimCard from "./ClaimCard";
 import { Alert, Spinner } from "./ui";
 
@@ -19,6 +20,7 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
   // a moment later, so remember the home branch's answer and show it straight away.
   const [justMade, setJustMade] = useState<Claim | null>(null);
   const [all, setAll] = useState<Claim[] | null>(null);
+  const [queued, setQueued] = useState<QueuedClaim[]>([]);
   const [answer, setAnswer] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +31,7 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
   const load = useCallback(() => {
     if (!user) return;
     api<Claim[]>("/claims/mine").then((cs) => setFetched(cs.filter((c) => c.item_id === item.id))).catch(() => {});
+    api<QueuedClaim[]>("/claims/queued/mine").then((qs) => setQueued(qs.filter((q) => q.item_id === item.id))).catch(() => {});
     if (staff || isReporter) api<Claim[]>(`/items/${item.id}/claims`).then(setAll).catch(() => setAll([]));
   }, [api, user, item.id, staff, isReporter]);
 
@@ -39,8 +42,8 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
     setBusy(true);
     setError(null);
     try {
-      const created = await api<Claim>(`/items/${item.id}/claims`, { method: "POST", json: { answer } });
-      setJustMade(created);
+      const created = await api<Claim | QueuedResponse>(`/items/${item.id}/claims`, { method: "POST", json: { answer } });
+      if (!("queued" in created)) setJustMade(created);
       setAnswer("");
       load();
       onItemChanged();
@@ -56,7 +59,8 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
   const byId = new Map(fetched.map((c) => [c.id, c]));
   if (justMade && (!byId.has(justMade.id) || byId.get(justMade.id)!.version < justMade.version)) byId.set(justMade.id, justMade);
   const mine = [...byId.values()];
-  const myActive = mine.find((c) => c.status !== "REJECTED");
+  const waiting = queued.filter((q) => q.status === "QUEUED");
+  const myActive = mine.find((c) => c.status !== "REJECTED") ?? waiting[0];
   const claimable = item.status === "OPEN" || item.status === "MATCHED";
 
   return (
@@ -71,6 +75,9 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
 
       {/* Your own claim(s) on this item */}
       {mine.map((c) => <ClaimCard key={c.id} claim={c} />)}
+
+      {/* Phase 5: claims waiting for an offline home branch */}
+      {queued.filter((q) => q.status !== "DELIVERED" || !mine.length).map((q) => <QueuedCard key={q.id} q={q} />)}
 
       {/* Form to claim it */}
       {!user && claimable && (
@@ -116,6 +123,39 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
       {(staff || (isReporter && canEdit(user, item))) && all && all.length === 0 && (
         <p className="text-sm text-slate-500">No claims yet.</p>
       )}
+    </div>
+  );
+}
+
+
+export function QueuedCard({ q }: { q: QueuedClaim }) {
+  const where = branchName(q.target_branch);
+  if (q.status === "FAILED") {
+    return (
+      <div className="flex gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+        <XCircle className="h-5 w-5 shrink-0" />
+        <p><b>Your queued claim was not accepted by {where}.</b> {q.last_error}</p>
+      </div>
+    );
+  }
+  if (q.status === "DELIVERED") {
+    return (
+      <div className="flex gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+        <Info className="h-5 w-5 shrink-0" />
+        <p>Your claim was delivered to {where} {q.delivered_at ? timeAgo(q.delivered_at) : ""}. Its status will appear here in a moment.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      <Clock className="h-5 w-5 shrink-0 animate-pulse" />
+      <div>
+        <p className="font-semibold">Claim queued: {where} is offline</p>
+        <p className="mt-0.5">
+          Your claim is saved here and will be sent to {where} automatically as soon as it is back. You don&apos;t need to do anything.
+        </p>
+        <p className="mt-1 text-xs text-amber-700">Saved {timeAgo(q.created_at)} · delivery attempts: {q.attempts}</p>
+      </div>
     </div>
   );
 }

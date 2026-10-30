@@ -6,6 +6,7 @@ and creates the first admin account.
 """
 import asyncio
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,7 +16,7 @@ from sqlalchemy import select
 from .config import KNOWN_BRANCHES, settings, warn_about_dev_secrets
 from .database import Base, SessionLocal, engine
 from .models import Branch, Role, User
-from . import replication
+from . import reliability, replication
 from .notifier import notifier
 from .routers import auth, branches, claims, health, items, live, photos
 from .routers import replication as replication_router
@@ -35,6 +36,8 @@ def init_db() -> None:
         admin_email = settings.admin_email.lower()
         if db.scalar(select(User).where(User.email == admin_email)) is None:
             db.add(User(
+                # Same id on every branch (derived from the email), so all branches hold the SAME admin record
+                id=uuid.uuid5(uuid.NAMESPACE_URL, f"lostfinder-admin:{admin_email}"),
                 full_name="System Admin",
                 email=admin_email,
                 password_hash=hash_password(settings.admin_password),
@@ -49,14 +52,16 @@ async def lifespan(app: FastAPI):
     init_db()
     notifier.attach_loop(asyncio.get_running_loop())  # lets background threads push WebSocket messages
     replication.start()  # background threads: send our events, receive other branches' events
+    reliability.start()  # heartbeat monitor, queued-claim forwarder, periodic resync
     yield
+    reliability.stop()
     replication.stop()
 
 
 app = FastAPI(
     title=f"Lost & Found — Branch {settings.branch_id} ({settings.branch_name})",
     description="Distributed Lost and Found Property Management System — one branch node.",
-    version="0.4.0 (Phase 4)",
+    version="0.5.0 (Phase 5)",
     lifespan=lifespan,
 )
 

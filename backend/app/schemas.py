@@ -142,3 +142,16 @@ class ActivityOut(BaseModel):
     message: str
     link: str
     at: datetime
+
+
+# ---------- Phase 5: queued claims ----------
+class QueuedOut(BaseModel):
+    id: uuid.UUID
+    item_id: uuid.UUID
+    item_title: str | None
+    target_branch: str
+    status: str          # QUEUED, DELIVERED, FAILED
+    attempts: int
+    last_error: str | None
+    created_at: datetime
+    delivered_at: datetime | None

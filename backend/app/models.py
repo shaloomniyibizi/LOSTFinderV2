@@ -143,3 +143,25 @@ class Match(Base):
     score: Mapped[int] = mapped_column(Integer)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class QueuedRequest(Base):
+    """A request that must be handled by ANOTHER branch which is offline right now (Phase 5).
+
+    Example: you claim an item whose home branch (Bus Park) is down. Instead of refusing, this branch
+    keeps the claim here and a background thread delivers it as soon as Bus Park is back.
+    The final decision is still taken at the home branch, so it stays safe (one claim per item)."""
+    __tablename__ = "queued_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    kind: Mapped[str] = mapped_column(String(20), default="claim")
+    target_branch: Mapped[str] = mapped_column(String(5), index=True)
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(12), default="QUEUED", index=True)  # QUEUED, DELIVERED, FAILED
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

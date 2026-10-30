@@ -63,6 +63,46 @@ export interface ReplicationStatus {
   items_by_home_branch: Record<string, number>;
   users: number;
   websocket_clients?: number;
+  queued_claims?: number;
+  last_resync?: Record<string, { at: string; users: number; items: number; claims: number }>;
+}
+
+/** Phase 5: a claim saved at this branch while the item's home branch was offline. */
+export interface QueuedClaim {
+  id: string;
+  item_id: string;
+  item_title: string | null;
+  target_branch: string;
+  status: "QUEUED" | "DELIVERED" | "FAILED";
+  attempts: number;
+  last_error: string | null;
+  created_at: string;
+  delivered_at: string | null;
+}
+
+export interface QueuedResponse {
+  queued: true;
+  id: string;
+  target_branch: string;
+  status: string;
+  message: string;
+}
+
+export interface PeerView {
+  branch: string;
+  name: string;
+  status: "up" | "down" | "unknown";
+  misses: number;
+  latency_ms: number | null;
+  last_ok: string | null;
+  since: string;
+}
+
+export interface ClusterView {
+  branch: string;
+  checked_every_seconds: number;
+  down_after_misses: number;
+  peers: PeerView[];
 }
 
 export interface Match {

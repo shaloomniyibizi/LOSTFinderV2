@@ -1,0 +1,4 @@
+# For the scripts in this folder and the load test:  pip install -r scripts/requirements.txt
+httpx>=0.27
+PyJWT>=2.8
+locust>=2.20

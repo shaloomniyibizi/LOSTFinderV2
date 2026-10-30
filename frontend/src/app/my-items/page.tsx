@@ -4,13 +4,14 @@ import { Inbox, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import ClaimCard from "@/components/ClaimCard";
+import { QueuedCard } from "@/components/ClaimPanel";
 import ItemCard, { ItemCardSkeleton } from "@/components/ItemCard";
 import RequireLogin from "@/components/RequireLogin";
 import { Alert, EmptyState, PageHeader } from "@/components/ui";
 import { isOffline } from "@/lib/api";
 import { useApp } from "@/lib/app-context";
 import { useNotifications } from "@/lib/notifications";
-import type { Claim, ItemPage, ItemType } from "@/lib/types";
+import type { Claim, ItemPage, ItemType, QueuedClaim } from "@/lib/types";
 
 export default function MyItemsPage() {
   return (
@@ -26,10 +27,12 @@ function MyItems() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<ItemType | "ALL">("ALL");
   const [claims, setClaims] = useState<Claim[]>([]);
+  const [queued, setQueued] = useState<QueuedClaim[]>([]);
   const { liveVersion } = useNotifications();
 
   useEffect(() => {
     api<Claim[]>("/claims/mine").then(setClaims).catch(() => setClaims([]));
+    api<QueuedClaim[]>("/claims/queued/mine").then((qs) => setQueued(qs.filter((q) => q.status !== "DELIVERED"))).catch(() => setQueued([]));
   }, [api, liveVersion]);
 
   useEffect(() => {
@@ -76,6 +79,21 @@ function MyItems() {
         <EmptyState icon={Inbox} title="No reports yet">
           When you report a lost or found item, it will appear here.
         </EmptyState>
+      )}
+
+      {queued.length > 0 && (
+        <section className="mt-12">
+          <h2 className="text-xl font-bold tracking-tight">Claims waiting for an offline branch</h2>
+          <p className="mt-1 text-sm text-slate-500">Saved at {branch.name}. They are sent automatically when the item&apos;s branch is back.</p>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            {queued.map((q) => (
+              <div key={q.id}>
+                <Link href={`/items/${q.item_id}`} className="mb-2 block font-semibold text-slate-900 hover:text-indigo-700">{q.item_title ?? "Item"}</Link>
+                <QueuedCard q={q} />
+              </div>
+            ))}
+          </div>
+        </section>
       )}
 
       {claims.length > 0 && (

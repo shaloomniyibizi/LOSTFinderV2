@@ -32,6 +32,32 @@ def create_token(user: User) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
+def short_token_for(user_id: uuid.UUID, role: str, minutes: int = 5) -> str:
+    """A short-lived login token, made by a branch to act ON BEHALF OF a user, e.g. to deliver
+    a claim that was queued while the item's home branch was down. Every branch shares JWT_SECRET,
+    so the home branch accepts it."""
+    payload = {"sub": str(user_id), "role": role,
+               "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes)}
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def internal_token() -> str:
+    """Proves to another branch that the caller is a branch of this system (for /replication/snapshot)."""
+    payload = {"sub": f"branch:{settings.branch_id}", "role": "internal",
+               "exp": datetime.now(timezone.utc) + timedelta(minutes=2)}
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def require_internal(token: str = Depends(oauth2_scheme)) -> str:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except jwt.PyJWTError:
+        raise HTTPException(401, "Internal token required")
+    if payload.get("role") != "internal":
+        raise HTTPException(403, "Only branches may call this")
+    return payload["sub"]
+
+
 def user_from_token(db: Session, token: str) -> User | None:
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])

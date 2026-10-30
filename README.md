@@ -1,7 +1,7 @@
 # LostFinder: Distributed Lost and Found Property Management System
 
 Final project for the Distributed Systems module.
-**Phase 4: Smart features.** Three branches, each with its own PostgreSQL database, kept in sync through RabbitMQ; shared photo storage; a Next.js + Tailwind web app; **automatic matching** of lost and found items, **live notifications** over WebSockets, and **safe claims** (only one claim per item can succeed).
+**Phase 5: Reliability and testing.** Three branches, each with its own PostgreSQL database, kept in sync through RabbitMQ. The system includes shared photo storage, a Next.js + Tailwind web app, automatic matching, live notifications and safe claims. It also **keeps working when a branch, RabbitMQ or a database fails**, and it comes with automated failure, consistency, replication-lag and load tests (results in [`docs/TESTING.md`](docs/TESTING.md)).
 
 Everything runs on your own computer and nothing costs money. The only optional online part is Cloudinary's free plan for photos. All passwords and secrets live in a private **`.env`** file.
 
@@ -16,6 +16,7 @@ Everything runs on your own computer and nothing costs money. The only optional 
              │                           │                           │
              └──── RabbitMQ: every change (items, users, claims) goes to every branch ────┘
              └──── claims are forwarded to the item's home branch over HTTP ─────────────┘
+             └──── heartbeats every 5 s · queued claims · resync from peers after a failure ┘
              └──── photos: shared folder (default) or Cloudinary (free cloud) ───────────┘
 ```
 
@@ -91,7 +92,59 @@ Nothing secret is written in the code or in `docker-compose.yml`. Docker Compose
 
 ---
 
-## What's new in Phase 4
+## What's new in Phase 5: reliability
+
+| Failure | What happens now |
+|---|---|
+| **A branch crashes** | Every branch sends a **heartbeat** to the others every 5 s. After 3 missed heartbeats, the others mark it *down*; the **Network status** page shows what each branch sees. Reports and searches continue at the other branches. |
+| **You claim an item whose home branch is down** | The claim is **queued** (HTTP 202) at the branch you're using, instead of being refused. It is listed under **My reports → Claims waiting for an offline branch**, then **delivered automatically** when the home branch is back, and you get a notification. The claim is still decided only at the home branch. |
+| **A branch was off and missed events** | **Anti-entropy resync:** it asks its peers for a snapshot of their data and applies anything newer (higher version wins). This runs at startup, whenever a peer comes back up, every 5 minutes, and on demand (`POST /replication/resync`, admin). |
+| **RabbitMQ goes down** | Changes are still saved. Their events wait in the **outbox** and are sent once RabbitMQ is back. |
+| **A branch loses its whole database** | After a restart, the resync **rebuilds** its data from the copies held by the other branches. |
+| **The branch your browser uses goes down** | The web app notices after 2 missed heartbeats and **switches to another branch automatically**, with a message. |
+
+Replication is also faster. The publisher used to check the outbox every 0.5 s. Now it is woken as soon as a change is saved, so the median replication lag fell from **310 ms to 9 ms**.
+
+### New endpoints
+| Method | Path | Who | What |
+|---|---|---|---|
+| GET | `/cluster` | anyone | This branch's view of its peers: up/down, last heartbeat, missed heartbeats |
+| GET | `/claims/queued/mine` | logged in | Your claims waiting for an offline branch |
+| GET | `/replication/snapshot` | branches only (internal token) | All data, used by resync |
+| POST | `/replication/resync` | admin | Resync from all peers now |
+
+`/replication/status` now also shows `queued_claims` and `last_resync`.
+
+### Testing (details and results in [`docs/TESTING.md`](docs/TESTING.md))
+Start the whole system (`docker compose up`), then in a second terminal in the project folder:
+```powershell
+pip install -r scripts/requirements.txt            # httpx, PyJWT, locust
+python scripts/check_consistency.py --wait         # are all three databases identical?
+python scripts/measure_replication.py --items 60   # replication lag → docs/results/replication_lag.csv
+python scripts/failure_test.py                     # crash a branch + stop RabbitMQ, with timings
+python scripts/failure_test.py --include-wipe      # also wipe branch C's database (it is rebuilt)
+locust -f loadtest/locustfile.py --headless -u 60 -r 20 -t 45s --csv docs/results/load_3_branches
+```
+The scripts read `JWT_SECRET` from your `.env`. The failure test stops and starts containers itself and saves a report in `docs/results/`.
+
+| Result (development machine) | |
+|---|---|
+| Automated tests | 86 passed |
+| Failure test | 16 of 16 checks passed. Crash detected in 11.6 s; queued claim delivered 4.6 s after restart; consistent again 5.1 s after restart; wiped database rebuilt in 1.4 s |
+| Replication lag | median 9.1 ms, p95 18.1 ms, 0 lost |
+| Load (60 users) | searches: avg 46 ms over 3 branches vs 151 ms on 1 branch, 0 failures |
+
+### Phase 5 demo (for the presentation)
+1. Open **/status**: each branch card shows which peers it *sees*.
+2. `docker compose stop branch-c`. Within about 15 s, Campus and Bus Park show Airport as **down**.
+3. Log in on Campus and claim an Airport item. Instead of an error, you see **"Claim queued"**, and it appears under *My reports*.
+4. `docker compose start branch-c`. Within a few seconds the claim is delivered, you get a pop-up, and **/status** shows all three in sync.
+5. Select **Airport** in the web app, then stop it again: the app switches to another branch on its own.
+6. Run `python scripts/failure_test.py --include-wipe` and show the generated report.
+
+---
+
+## Phase 4 features
 
 ### 1. Matching lost and found items
 Every LOST report is compared with every active FOUND report of the same category (and the other way round), across **all branches**:
@@ -127,12 +180,12 @@ Pairs scoring **60 or more** become *possible matches*, shown on both items' pag
                    └──reject───► REJECTED  (item can be claimed again)
 ```
 - Anyone (except the finder) can claim a **FOUND** item by answering the finder's **question for the owner** (e.g. "What is the wallpaper picture?").
-- A claim is **always decided at the item's home branch**, its primary. If you're using another branch, your request is **forwarded there over HTTP**. If the home branch is down, you get a clear "try again later" instead of an unsafe decision.
+- A claim is **always decided at the item's home branch**, its primary. If you're using another branch, your request is **forwarded there over HTTP**. If the home branch is down, the claim is **queued** and delivered when it returns (Phase 5); it is never decided anywhere else.
 - At the home branch, the item's row is **locked** (`SELECT … FOR UPDATE`) while the claim is checked and saved. When two people claim at the same instant, the second waits, sees `CLAIMED`, and is refused (`409`). **Exactly one claim can succeed.**
 - Claims get a **version number** and are **replicated**, so the claimant sees the decision from any branch.
 - **Staff desk** (`/staff`): staff of the home branch see the claimant's answer and contact details, then **Approve / Reject** (with a note) and **Mark as handed over**. They can do this from any branch, because the requests are forwarded.
 
-### New endpoints
+### Phase 4 endpoints
 | Method | Path | Who | What |
 |---|---|---|---|
 | GET | `/items/{id}/matches` | anyone | Possible matches, with score |
@@ -162,7 +215,6 @@ Pairs scoring **60 or more** become *possible matches*, shown on both items' pag
 3. **Claim through another branch:** user 1 opens the found phone (still on Airport), answers the question and clicks **Claim**. The claim is decided at Bus Park, the item's home.
 4. **Race:** run `python scripts/demo_claims.py`. Two people claim the same item at the same instant from Campus and Airport; exactly one is accepted.
 5. **Staff:** log in as Bus Park staff → **Staff desk** → *Approve*. User 1 gets "Your claim was approved". Then *Mark as handed over*: the item shows *Returned* on every branch.
-6. **Failure:** `docker compose stop branch-b`, then try to claim a Bus Park item from Campus: "The Bus Park branch, which handles this item, is offline right now". Searching still works everywhere. `docker compose start branch-b` and it works again.
 
 ---
 
@@ -185,23 +237,32 @@ Pairs scoring **60 or more** become *possible matches*, shown on both items' pag
 lostfinder/
 ├── .env.example              # copy to .env: all private settings
 ├── docker-compose.yml        # 3 databases + 3 branches + RabbitMQ (+ optional SeaweedFS)
-├── docs/screenshots/         # screenshots for your report
+├── docs/
+│   ├── TESTING.md            # test strategy and results (Phase 5)
+│   ├── results/              # failure-test report, replication lag and load-test CSVs
+│   └── screenshots/          # screenshots for your report
+├── loadtest/locustfile.py    # Locust load test
 ├── scripts/
+│   ├── requirements.txt      # pip install -r scripts/requirements.txt
 │   ├── seed_demo.py          # demo users and items
 │   ├── demo_replication.py   # Phase 2 demo
-│   └── demo_claims.py        # Phase 4 demo: two simultaneous claims, one wins
+│   ├── demo_claims.py        # Phase 4 demo: two simultaneous claims, one wins
+│   ├── check_consistency.py  # compare the three databases
+│   ├── measure_replication.py# replication lag
+│   └── failure_test.py       # crash / broker / wipe scenarios with timings
 ├── backend/                  # FastAPI branch server (same code for A, B and C)
 │   ├── .env.example          # only for running without Docker
 │   ├── app/
 │   │   ├── config.py         # settings (reads .env)
 │   │   ├── models.py         # items, users, claims, matches, outbox
 │   │   ├── replication.py    # outbox, publisher, consumer, applying events
+│   │   ├── reliability.py    # heartbeats, queued claims, snapshots and resync
 │   │   ├── matching.py       # scoring and deterministic matches
 │   │   ├── notifier.py       # WebSocket connections and pushing messages
 │   │   ├── announce.py       # notification texts
 │   │   ├── storage.py        # photos: shared folder, Cloudinary, SeaweedFS
 │   │   └── routers/          # health, auth, branches, items, photos, claims, live (ws + activity), replication
-│   └── tests/                # 71 automated tests
+│   └── tests/                # 86 automated tests
 └── frontend/                 # Next.js + Tailwind web app
     └── src/
         ├── app/              # /, search, report, items/[id], my-items, staff, status, login, register
@@ -213,7 +274,7 @@ lostfinder/
 ```powershell
 cd backend
 pip install -r requirements.txt
-python -m pytest -q          # 71 passed (no PostgreSQL, RabbitMQ or internet needed)
+python -m pytest -q          # 86 passed (no PostgreSQL, RabbitMQ or internet needed)
 cd ../frontend
 npm run lint                 # TypeScript check
 npm run build                # production build
@@ -225,8 +286,14 @@ npm run build                # production build
 - **RabbitMQ dashboard says "invalid credentials":** use `RABBITMQ_USER` / `RABBITMQ_PASSWORD` from `.env`, not guest/guest.
 - **Upload or a new feature says "Not Found":** the containers run old code. Run `docker compose up --build`.
 - **No pop-ups:** the bell icon is crossed out while the WebSocket is reconnecting. Check that the branch you selected is online.
-- **Claim says the home branch is offline:** start that branch (`docker compose start branch-b`). Claims are only decided at the item's home branch, so they're never decided twice.
+- **Claim says "queued":** the item's home branch is offline. Start it (`docker compose start branch-b`) and the claim is delivered within a few seconds.
+- **`relation "queued_requests" does not exist`:** you upgraded from Phase 4 without resetting. Run `docker compose down -v`, then `docker compose up --build`.
+- **Scripts say `JWT_SECRET` is missing:** run them from the project folder (where `.env` is).
+- **`failure_test.py` stops at a docker command:** the whole system must have been started with `docker compose up` from the project folder.
 - **Photo upload fails:** the reason is shown under the photo. *Cloudinary refused … Invalid Signature* means `CLOUDINARY_URL` is mistyped.
 
-## Next: Phase 5
-Fault tolerance: a heartbeat monitor, automatic failover in the web app, and queueing claims while a home branch is down.
+## Next steps
+All five phases are done. For the final report:
+- Run `docs/TESTING.md`'s tests on your own computer and use your own numbers.
+- Take screenshots of **/status** during a failure, the queued claim, and the failure-test report.
+- Ideas for future work: HTTPS and rate limiting, a real search engine (e.g. Meilisearch) for fuzzy matching, image similarity for matching photos, more than one replica per branch, and running it across several computers on a LAN.

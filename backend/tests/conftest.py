@@ -6,6 +6,7 @@ _db_file = os.path.join(tempfile.mkdtemp(), "test.db")
 os.environ["DATABASE_URL"] = f"sqlite:///{_db_file}"
 os.environ["PHOTO_DIR"] = os.path.join(os.path.dirname(_db_file), "photos")
 os.environ["BRANCH_ID"] = "A"
+os.environ["BACKGROUND_TASKS"] = "0"  # no heartbeat/forwarder/resync threads in tests
 os.environ["BRANCH_NAME"] = "Campus"
 os.environ["ADMIN_EMAIL"] = "admin@test.local"
 os.environ["ADMIN_PASSWORD"] = "admin123"
@@ -19,8 +20,11 @@ from app.main import app, init_db  # noqa: E402
 
 @pytest.fixture()
 def client():
+    from app import reliability
     Base.metadata.drop_all(bind=engine)
     init_db()
+    for peer in reliability.monitor.peers.values():  # every test starts with peers "unknown"
+        peer.status, peer.misses = "unknown", 0
     with TestClient(app) as c:
         yield c
 

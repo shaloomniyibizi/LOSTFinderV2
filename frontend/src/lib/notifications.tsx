@@ -27,6 +27,7 @@ interface NotificationsState {
   refresh: () => void;
   toasts: Toast[];
   dismiss: (id: number) => void;
+  pushToast: (t: Omit<Toast, "id">) => void;
   /** Increases whenever a live message arrives, so pages can reload their data. */
   liveVersion: number;
 }
@@ -146,8 +147,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, [user, activity]);
 
   const value = useMemo(
-    () => ({ connected, activity, unread, markAllRead, refresh, toasts, dismiss, liveVersion }),
-    [connected, activity, unread, markAllRead, refresh, toasts, dismiss, liveVersion],
+    () => ({ connected, activity, unread, markAllRead, refresh, toasts, dismiss, pushToast, liveVersion }),
+    [connected, activity, unread, markAllRead, refresh, toasts, dismiss, pushToast, liveVersion],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
