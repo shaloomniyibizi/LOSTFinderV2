@@ -4,6 +4,7 @@ Run it with:  uvicorn app.main:app --port 8001
 On startup it creates the tables (if missing), registers the three branches,
 and creates the first admin account.
 """
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,8 +14,14 @@ from sqlalchemy import select
 from .config import KNOWN_BRANCHES, settings
 from .database import Base, SessionLocal, engine
 from .models import Branch, Role, User
+from . import replication
 from .routers import auth, branches, health, items
+from .routers import replication as replication_router
 from .security import hash_password
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     [%(name)s] %(message)s")
+# pika logs every lost connection as an ERROR; our own "retrying in 3s" warning already says it
+logging.getLogger("pika").setLevel(logging.CRITICAL)
 
 
 def init_db() -> None:
@@ -37,13 +44,15 @@ def init_db() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    replication.start()  # background threads: send our events, receive other branches' events
     yield
+    replication.stop()
 
 
 app = FastAPI(
     title=f"Lost & Found — Branch {settings.branch_id} ({settings.branch_name})",
     description="Distributed Lost and Found Property Management System — one branch node.",
-    version="0.1.0 (Phase 1)",
+    version="0.2.0 (Phase 2)",
     lifespan=lifespan,
 )
 
@@ -60,3 +69,4 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(branches.router)
 app.include_router(items.router)
+app.include_router(replication_router.router)

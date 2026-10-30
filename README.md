@@ -1,132 +1,170 @@
 # Distributed Lost and Found Property Management System
 
 Final project for the Distributed Systems module.
-**Phase 1: Setup and foundation.** One branch (Campus, Branch A) with its own PostgreSQL database.
+**Phase 2: Distributed core.** Three branches, each with its own PostgreSQL database, kept in sync through RabbitMQ.
 
 Everything runs on your own computer. Nothing is deployed online and nothing costs money.
 
+```
+            Branch A (Campus)        Branch B (Bus Park)       Branch C (Airport)
+            localhost:8001           localhost:8002            localhost:8003
+                 │                        │                         │
+            database A               database B                database C
+                 │                        │                         │
+                 └──────────── RabbitMQ (localhost:15672) ──────────┘
+                       every change is sent to every branch
+```
+
 ---
 
-## What Phase 1 contains
+## What changed since Phase 1
 
-| Part | What it does |
-|---|---|
-| FastAPI back end (`backend/app`) | The API for one branch |
-| PostgreSQL | This branch's own database |
-| Tables | `branches`, `users`, `items`, `claims`, `matches` |
-| Login | Sign-up, login with JWT tokens, roles: owner, finder, staff, admin |
-| Items | Report LOST/FOUND items, search with filters, view, edit, delete |
-| Health check | `GET /health`, used as the heartbeat in Phase 5 |
-| Tests | 16 automated tests (`backend/tests`) |
+### One role for the public: `user`
+- The old `owner` and `finder` roles are merged into **`user`**.
+- **Every user can report both LOST and FOUND items.**
+- Roles are now: `user`, `staff` (works at a branch), `admin`.
+- Sign-up always creates a `user`. Staff and admins are created by an admin with `POST /users`.
 
-Already prepared for Phase 2:
-- Item ids are **UUIDs**, so two branches can never create the same id.
-- Every item has a **`home_branch`** (the branch that owns it) and a **`version`** that goes up by 1 on every change.
-- A branch **refuses to change an item owned by another branch** (HTTP 409).
-- The branch name and database come from **environment variables**, so the same code can run as Branch A, B or C.
+### Replication between branches
+- **Items** are copied to every branch: created, updated and deleted.
+- **User accounts** are copied too, so you can sign up at one branch and log in at any branch.
+- Search at any branch finds items from **all** branches. It reads only that branch's own database.
+- Only an item's **home branch** can change it. Other branches refuse with `409`.
+- New endpoint: **`GET /replication/status`** shows the RabbitMQ connection, events sent and received, unsent events, and item counts per home branch.
+
+## How replication works
+
+1. **Outbox.** When a branch saves a change, it also saves an *event* (`item.created`, `item.updated`, `item.deleted` or `user.created`) in its `outbox_events` table, **in the same transaction**. A change is never saved without its event.
+2. **Publisher thread.** A background thread sends unsent events to the RabbitMQ exchange `lostfound.events`. It marks each one as sent after RabbitMQ confirms it. If RabbitMQ is down, events wait in the outbox and go out when it's back.
+3. **One durable queue per branch** (`branch-A`, `branch-B`, `branch-C`). Every event goes to every queue. A queue keeps messages while its branch is offline.
+4. **Consumer thread.** Each branch reads its own queue and applies events from the other branches:
+   - a new item is **inserted**
+   - an existing item is replaced **only if the event's `version` is higher**, so old or duplicate messages are ignored
+   - a deleted item is removed
+   - events from the branch itself are ignored
+
+Link to the lecture: replicas on every node (GFS/HDFS), **one primary per item** that orders its changes (GFS primary), **version numbers** to detect stale copies (GFS chunk versions), and **push instead of polling** (Dropbox notifications).
+
+---
 
 ## Project structure
 
 ```
-lost-and-found/
-├── docker-compose.yml        # Phase 1: db-a + branch-a
+lostfinder/
+├── docker-compose.yml          # 3 databases + 3 branches + RabbitMQ
 ├── README.md
+├── scripts/
+│   └── demo_replication.py     # automatic Phase 2 demo
 └── backend/
     ├── Dockerfile
     ├── requirements.txt
     ├── app/
-    │   ├── main.py           # starts the app, creates tables, seeds branches + admin
-    │   ├── config.py         # BRANCH_ID, DATABASE_URL, JWT settings
-    │   ├── database.py       # database connection
-    │   ├── models.py         # the tables
-    │   ├── schemas.py        # request / response shapes
-    │   ├── security.py       # passwords, JWT, role checks
+    │   ├── main.py             # starts the app and the replication threads
+    │   ├── config.py           # BRANCH_ID, DATABASE_URL, RABBITMQ_URL, JWT
+    │   ├── database.py
+    │   ├── models.py           # tables, including outbox_events
+    │   ├── schemas.py
+    │   ├── security.py
+    │   ├── replication.py      # outbox, publisher, consumer, applying events
     │   └── routers/
-    │       ├── health.py     # GET /health
-    │       ├── auth.py       # register, login, me, admin creates users
-    │       ├── branches.py   # GET /branches
-    │       └── items.py      # report, search, view, edit, delete items
+    │       ├── health.py
+    │       ├── auth.py
+    │       ├── branches.py
+    │       ├── items.py
+    │       └── replication.py  # GET /replication/status
     └── tests/
         ├── conftest.py
-        └── test_phase1.py
+        ├── test_phase1.py
+        └── test_replication.py
 ```
 
 ---
 
-## Option 1: Run with Docker (recommended)
+## Upgrading from Phase 1
 
-You need **Docker Desktop** installed and running.
+The database layout changed (new roles, new `outbox_events` table), so start with empty databases:
 
-```bash
-cd lost-and-found
+```powershell
+cd lostfinder
+docker compose down -v          # removes the old Phase 1 containers AND their data
 docker compose up --build
 ```
 
-Then open **http://localhost:8001/docs**. This is FastAPI's built-in page where you can try every endpoint.
-
-To stop: press `Ctrl+C`, or run `docker compose down`.
-To also delete the database data: `docker compose down -v`.
-
-## Option 2: Run without Docker
-
-You need **Python 3.11+** and **PostgreSQL** installed.
-
-1. Create the database (in pgAdmin, or in a terminal):
-   ```bash
-   psql -U postgres -c "CREATE DATABASE branch_a;"
-   ```
-2. Install the Python packages:
-   ```bash
-   cd lost-and-found/backend
-   python -m venv venv
-   # Windows:      venv\Scripts\activate
-   # macOS/Linux:  source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-3. Start Branch A (use your own PostgreSQL password):
-   ```bash
-   # macOS / Linux
-   export BRANCH_ID=A BRANCH_NAME=Campus
-   export DATABASE_URL=postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/branch_a
-   uvicorn app.main:app --port 8001 --reload
-   ```
-   ```powershell
-   # Windows PowerShell
-   $env:BRANCH_ID="A"; $env:BRANCH_NAME="Campus"
-   $env:DATABASE_URL="postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/branch_a"
-   uvicorn app.main:app --port 8001 --reload
-   ```
-4. Open **http://localhost:8001/docs**.
+If you changed the database user or password in your Phase 1 `docker-compose.yml`, use the new file as it is. It uses `postgres` / `postgres` for all three databases.
 
 ---
 
-## Try it in 5 minutes (at http://localhost:8001/docs)
+## Run with Docker (recommended)
 
-1. **`GET /health`**: you should see `"branch": "A"` and `"database": "ok"`.
-2. **`POST /auth/register`**: create a finder:
-   ```json
-   {"full_name": "Eric Finder", "email": "eric@example.com", "password": "secret123", "role": "finder"}
-   ```
-3. Click **Authorize** (top right). Log in with `eric@example.com` / `secret123`.
-4. **`POST /items`**: report a found item:
-   ```json
-   {"type": "FOUND", "category": "laptop", "colour": "black", "title": "Black HP laptop",
-    "description": "Sticker on the lid", "location": "Library 2nd floor", "event_date": "2026-10-30"}
-   ```
-   The response shows `"home_branch": "A"` and `"version": 1`.
-5. **`GET /items`**: search with `q=sticker`, `colour=black` or `type=FOUND`.
-6. **`PATCH /items/{id}`**: change the location. `version` becomes 2.
+Run this **in the folder that contains `docker-compose.yml`** (not inside `backend`):
 
-### Default admin account
-Created automatically on first start:
-- Email: `admin@lostfound.local`
-- Password: `admin123`
-
-The admin can create staff accounts with **`POST /users`**:
-```json
-{"full_name": "Grace Staff", "email": "grace@example.com", "password": "secret123", "role": "staff", "branch_id": "A"}
+```powershell
+docker compose up --build
 ```
-Change the admin password and `JWT_SECRET` before showing the system to anyone.
+
+Wait until you see `Uvicorn running` three times and `consumer listening on branch-A`, `branch-B` and `branch-C`. Then open:
+
+| What | Address |
+|---|---|
+| Branch A (Campus) API | http://localhost:8001/docs |
+| Branch B (Bus Park) API | http://localhost:8002/docs |
+| Branch C (Airport) API | http://localhost:8003/docs |
+| RabbitMQ dashboard | http://localhost:15672 (login `guest` / `guest`) |
+
+Default admin on every branch: `admin@lostfound.local` / `admin123`.
+
+## Run without Docker
+
+You need PostgreSQL and RabbitMQ installed on your computer.
+
+1. Create three databases: `branch_a`, `branch_b`, `branch_c`.
+2. Install the packages once: `cd backend`, then `pip install -r requirements.txt`.
+3. Open **three terminals** in `backend` and start one branch in each (Windows PowerShell shown; use your PostgreSQL password):
+   ```powershell
+   # Terminal 1: Branch A
+   $env:BRANCH_ID="A"; $env:BRANCH_NAME="Campus"
+   $env:DATABASE_URL="postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/branch_a"
+   $env:RABBITMQ_URL="amqp://guest:guest@localhost:5672/"
+   uvicorn app.main:app --port 8001
+   ```
+   For terminals 2 and 3, use `B` / `Bus Park` / `branch_b` / port `8002` and `C` / `Airport` / `branch_c` / port `8003`.
+
+---
+
+## Phase 2 demo
+
+### Automatic demo
+With the system running, in another terminal:
+```powershell
+pip install httpx
+python scripts/demo_replication.py
+```
+It signs up a user at A, logs in at B and C, reports a FOUND laptop at B and a LOST phone at A, checks that every branch has copies, updates the laptop at B, and shows that A refuses to edit it.
+
+### By hand (in the browser)
+1. **http://localhost:8001/docs** → `POST /auth/register` → create an account.
+2. **http://localhost:8002/docs** → **Authorize** → log in with the same account. It works, because the account was copied.
+3. On Branch B → `POST /items` → report a FOUND item. Note `"home_branch": "B"`.
+4. **http://localhost:8003/docs** → `GET /items` → the item is there.
+5. On Branch B → `PATCH /items/{id}` → change the location. On A or C, `GET /items/{id}` shows `"version": 2`.
+6. On Branch A → `PATCH` the same item → `409`: *This item belongs to branch B*.
+
+### Failure demo 1: a branch goes down and catches up
+```powershell
+docker compose stop branch-c
+# report 2–3 items at Branch A or B (http://localhost:8001/docs)
+docker compose start branch-c
+```
+After a few seconds, `GET /items` on Branch C (http://localhost:8003/docs) shows the items it missed. RabbitMQ kept them in queue `branch-C` (look at *Queues* in the dashboard while C is stopped).
+
+### Failure demo 2: RabbitMQ goes down
+```powershell
+docker compose stop rabbitmq
+# report an item at Branch A: it still works
+# http://localhost:8001/replication/status shows "outbox_pending": 1
+docker compose start rabbitmq
+```
+Within a few seconds the event is sent, `outbox_pending` goes back to 0, and the item appears on B and C.
 
 ---
 
@@ -136,39 +174,32 @@ Change the admin password and `JWT_SECRET` before showing the system to anyone.
 |---|---|---|---|
 | GET | `/health` | anyone | Branch heartbeat |
 | GET | `/branches` | anyone | List branches A, B, C |
-| POST | `/auth/register` | anyone | Sign up as owner or finder |
-| POST | `/auth/login` | anyone | Get a JWT token |
+| POST | `/auth/register` | anyone | Sign up (role is always `user`) |
+| POST | `/auth/login` | anyone | Get a JWT token (works at any branch) |
 | GET | `/auth/me` | logged in | Your account |
-| POST | `/users` | admin | Create staff or admin accounts |
+| POST | `/users` | admin | Create `user`, `staff` (with `branch_id`) or `admin` accounts |
 | GET | `/users` | admin | List users |
-| POST | `/items` | logged in | Report a LOST or FOUND item |
-| GET | `/items` | anyone | Search: `q`, `type`, `category`, `colour`, `status`, `branch`, `date_from`, `date_to`, `limit`, `offset` |
+| POST | `/items` | any logged-in user | Report a LOST **or** FOUND item |
+| GET | `/items` | anyone | Search all branches' items: `q`, `type`, `category`, `colour`, `status`, `branch`, `date_from`, `date_to` |
 | GET | `/items/{id}` | anyone | One item |
-| PATCH | `/items/{id}` | reporter, branch staff, admin | Edit (status: staff/admin only); raises `version` |
-| DELETE | `/items/{id}` | admin | Delete |
-
-## Item status
-`OPEN` → `MATCHED` → `CLAIMED` → `RETURNED`
-(`MATCHED` and `CLAIMED` are used from Phase 4.)
+| PATCH | `/items/{id}` | reporter, staff of the home branch, admin | Edit (only at the home branch); raises `version` |
+| DELETE | `/items/{id}` | admin | Delete (only at the home branch) |
+| GET | `/replication/status` | anyone | Replication health and counters |
 
 ---
 
-## Run the tests
+## Tests
 
-The tests use a temporary SQLite file, so they don't need PostgreSQL:
-
-```bash
+```powershell
 cd backend
-pip install -r requirements.txt
 python -m pytest -q
 ```
+Expected: `29 passed`. The tests use a temporary SQLite file and don't need PostgreSQL or RabbitMQ.
 
-Expected: `16 passed`.
+## Notes and limits (for the report)
+- If the same email signs up at two branches before they sync, each branch keeps its own account and logs a conflict warning. This is rare and acceptable for the project.
+- Password **hashes** travel through RabbitMQ so users can log in anywhere. RabbitMQ stays on the private Docker network and is never exposed online.
+- A brand-new branch receives events from the moment its queue exists. All three queues are created as soon as any branch starts, so A, B and C never miss anything.
 
----
-
-## Next: Phase 2
-
-Phase 2 copies this pattern three times:
-- `db-b` + `branch-b` (port 8002) and `db-c` + `branch-c` (port 8003) in `docker-compose.yml`
-- RabbitMQ, so every branch publishes `item.created` / `item.updated` and the others save a copy
+## Next: Phase 3
+Photo storage with SeaweedFS (hash-named files, deduplication) and the Next.js front end.

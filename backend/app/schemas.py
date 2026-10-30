@@ -9,15 +9,16 @@ from .models import ItemStatus, ItemType, Role
 
 # ---------- Auth & users ----------
 class RegisterIn(BaseModel):
+    """Public sign-up. Everyone who signs up is a 'user' and can report both LOST and FOUND items."""
     full_name: str = Field(min_length=2, max_length=120)
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=200)
     phone: str | None = Field(default=None, max_length=30)
     password: str = Field(min_length=6, max_length=72)
-    role: Role = Role.owner  # public sign-up allows only owner or finder
 
 
 class CreateUserIn(RegisterIn):
-    """Admin-only: may create staff (with a branch) and other admins."""
+    """Admin-only: may create any role, e.g. staff (with a branch) or another admin."""
+    role: Role = Role.user
     branch_id: str | None = None
 
 

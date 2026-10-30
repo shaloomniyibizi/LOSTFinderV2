@@ -19,10 +19,12 @@ class Settings:
     )
 
     # Login tokens (JWT)
-    jwt_secret: str = os.getenv(
-        "JWT_SECRET", "Eaw2dYCWhfSB8ifMTc89alOv4yMHJIITFFOMQtNMAz0=")
+    jwt_secret: str = os.getenv("JWT_SECRET", "dev-secret-change-me-0123456789abcdef")
     jwt_algorithm: str = "HS256"
     token_minutes: int = int(os.getenv("TOKEN_MINUTES", "480"))
+
+    # RabbitMQ connection. Empty = replication switched off (e.g. when running the tests).
+    rabbitmq_url: str = os.getenv("RABBITMQ_URL", "")
 
     # First admin account, created automatically on startup if it doesn't exist
     admin_email: str = os.getenv("ADMIN_EMAIL", "admin@lostfound.local")

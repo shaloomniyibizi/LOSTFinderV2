@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Branch, Role, User
+from ..replication import record_event, user_payload
 from ..schemas import CreateUserIn, RegisterIn, TokenOut, UserOut
 from ..security import create_token, get_current_user, hash_password, require_roles, verify_password
 
@@ -18,9 +19,9 @@ def _email_taken(db: Session, email: str) -> bool:
 
 @router.post("/auth/register", response_model=UserOut, status_code=201)
 def register(data: RegisterIn, db: Session = Depends(get_db)):
-    """Public sign-up for owners and finders. Staff and admins are created by an admin."""
-    if data.role not in (Role.owner, Role.finder):
-        raise HTTPException(403, "Only owner or finder accounts can sign up; staff are created by an admin")
+    """Public sign-up. Every new account has the role 'user' and can report both LOST and FOUND items.
+    Staff and admin accounts are created by an admin. The account is copied to all branches,
+    so the person can log in at any branch."""
     if _email_taken(db, data.email):
         raise HTTPException(409, "Email already registered")
     user = User(
@@ -28,9 +29,11 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
         email=data.email.lower(),
         phone=data.phone,
         password_hash=hash_password(data.password),
-        role=data.role,
+        role=Role.user,
     )
     db.add(user)
+    db.flush()  # fills in user.id and created_at
+    record_event(db, "user.created", user_payload(user))
     db.commit()
     return user
 
@@ -70,6 +73,8 @@ def create_user(
         branch_id=data.branch_id if data.role == Role.staff else None,
     )
     db.add(user)
+    db.flush()
+    record_event(db, "user.created", user_payload(user))
     db.commit()
     return user
 
