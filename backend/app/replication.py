@@ -27,6 +27,7 @@ import uuid
 from datetime import date, datetime, timezone
 
 import pika
+from sqlalchemy import event as sa_event
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -119,6 +120,7 @@ def _claim_fields(d: dict) -> dict:
 def record_event(db: Session, event_type: str, data: dict) -> None:
     """Add an event to the outbox. Call BEFORE db.commit() so both are saved together."""
     db.add(OutboxEvent(event_type=event_type, payload={"origin": settings.branch_id, "data": data}))
+    db.info["has_outbox_events"] = True  # wake the publisher as soon as this transaction commits
 
 
 # ----------------------------------------------------------------------------
@@ -147,8 +149,13 @@ def _item_fields(d: dict) -> dict:
         "version": int(d["version"]),
         "reported_by": uuid.UUID(d["reported_by"]) if d.get("reported_by") else None,
         "created_at": _dt(d.get("created_at")),
-        "updated_at": _dt(d.get("updated_at")),
+        "updated_at": _dt(d.get("updated_at")) or _dt(d.get("created_at")),
     }
+
+
+def _without_missing_times(fields: dict) -> dict:
+    """Leave out timestamps that weren't sent, so the database defaults fill them in."""
+    return {k: v for k, v in fields.items() if not (k in ("created_at", "updated_at") and v is None)}
 
 
 def apply_event(db: Session, event_type: str, envelope: dict) -> str:
@@ -163,10 +170,10 @@ def apply_event(db: Session, event_type: str, envelope: dict) -> str:
         item_id = uuid.UUID(data["id"])
         existing = db.get(Item, item_id)
         if existing is None:
-            db.add(Item(id=item_id, **_item_fields(data)))
+            db.add(Item(id=item_id, **_without_missing_times(_item_fields(data))))
             return "inserted"
         if int(data["version"]) > existing.version:
-            for field, value in _item_fields(data).items():
+            for field, value in _without_missing_times(_item_fields(data)).items():
                 setattr(existing, field, value)
             return "updated"
         return "ignored: not newer"
@@ -182,7 +189,7 @@ def apply_event(db: Session, event_type: str, envelope: dict) -> str:
         claim_id = uuid.UUID(data["id"])
         existing = db.get(Claim, claim_id)
         if existing is None:
-            db.add(Claim(id=claim_id, **_claim_fields(data)))
+            db.add(Claim(id=claim_id, **_without_missing_times(_claim_fields(data))))
             return "inserted"
         if int(data["version"]) > existing.version:
             for field, value in _claim_fields(data).items():
@@ -230,6 +237,15 @@ class ReplicationStatus:
 
 status = ReplicationStatus()
 _stop = threading.Event()
+_wake_publisher = threading.Event()
+
+
+@sa_event.listens_for(Session, "after_commit")
+def _after_commit(session) -> None:
+    """A transaction that added outbox events was committed: tell the publisher immediately,
+    instead of letting the events wait for its next check (Phase 5 latency improvement)."""
+    if session.info.pop("has_outbox_events", False):
+        _wake_publisher.set()
 
 
 def _connect() -> pika.BlockingConnection:
@@ -284,7 +300,9 @@ def _publisher_loop() -> None:
                         db.commit()
                         status.events_sent += 1
                 if not pending:
-                    conn.process_data_events(time_limit=0.5)  # keeps the connection alive
+                    conn.process_data_events(time_limit=0)   # keeps the connection alive
+                    _wake_publisher.wait(0.5)                 # sleep until a new event is committed
+                    _wake_publisher.clear()
         except Exception as exc:  # RabbitMQ down, network error, database down...
             status.publisher_connected = False
             status.last_error = f"publisher: {exc!r}"

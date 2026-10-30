@@ -79,6 +79,13 @@ class Settings:
     # Matching: pairs scoring at least this many points (out of 100) are reported as possible matches
     match_threshold: int = int(os.getenv("MATCH_THRESHOLD", "60"))
 
+    # Reliability (Phase 5)
+    heartbeat_seconds: float = float(os.getenv("HEARTBEAT_SECONDS", "5"))    # how often peers are checked
+    heartbeat_misses: int = int(os.getenv("HEARTBEAT_MISSES", "3"))          # missed checks before "down"
+    queue_retry_seconds: float = float(os.getenv("QUEUE_RETRY_SECONDS", "3"))  # queued claims retry interval
+    resync_minutes: float = float(os.getenv("RESYNC_MINUTES", "5"))          # periodic anti-entropy sync
+    background_tasks: bool = os.getenv("BACKGROUND_TASKS", "1") == "1"       # 0 in tests
+
 
 settings = Settings()
 

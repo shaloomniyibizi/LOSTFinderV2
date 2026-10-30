@@ -1,18 +1,19 @@
 "use client";
 
-import { Activity, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Database, ImageIcon, Inbox, RadioTower, Server, Users, XCircle } from "lucide-react";
+import { Activity, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Clock, Database, HeartPulse, ImageIcon, Inbox, RadioTower, Server, Users, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { useApp } from "@/lib/app-context";
 import { BRANCHES } from "@/lib/branches";
-import type { Health, ReplicationStatus } from "@/lib/types";
+import type { ClusterView, Health, ReplicationStatus } from "@/lib/types";
 
 interface BranchState {
   online: boolean;
   ms: number | null;
   health: Health | null;
   repl: ReplicationStatus | null;
+  cluster: ClusterView | null;
 }
 
 const REFRESH_MS = 3000;
@@ -29,13 +30,14 @@ export default function StatusPage() {
         BRANCHES.map(async (b) => {
           const start = performance.now();
           try {
-            const [health, repl] = await Promise.all([
+            const [health, repl, cluster] = await Promise.all([
               apiFetch<Health>(b.url, "/health", { timeoutMs: 2500 }),
               apiFetch<ReplicationStatus>(b.url, "/replication/status", { timeoutMs: 2500 }),
+              apiFetch<ClusterView>(b.url, "/cluster", { timeoutMs: 2500 }).catch(() => null),
             ]);
-            return [b.id, { online: true, ms: Math.round(performance.now() - start), health, repl }] as const;
+            return [b.id, { online: true, ms: Math.round(performance.now() - start), health, repl, cluster }] as const;
           } catch {
-            return [b.id, { online: false, ms: null, health: null, repl: null }] as const;
+            return [b.id, { online: false, ms: null, health: null, repl: null, cluster: null }] as const;
           }
         }),
       );
@@ -115,10 +117,24 @@ export default function StatusPage() {
                   <span className="text-xs font-semibold capitalize text-slate-700">{s?.health?.photo_storage ?? "–"}</span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 pt-2">
+                {/* Phase 5: what this branch's heartbeat monitor sees */}
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 text-slate-600"><HeartPulse className="h-4 w-4 text-slate-400" /> Sees</span>
+                  <span className="flex flex-wrap justify-end gap-1">
+                    {s?.cluster?.peers.map((p) => (
+                      <span key={p.branch} title={`${p.name}: ${p.status}${p.latency_ms != null ? `, ${p.latency_ms} ms` : ""}`}
+                        className={`chip ${p.status === "up" ? "bg-emerald-50 text-emerald-700" : p.status === "down" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-500"}`}>
+                        {p.name} {p.status === "up" ? "up" : p.status === "down" ? "down" : "?"}
+                      </span>
+                    )) ?? <span className="text-xs text-slate-400">–</span>}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2 pt-2">
                   <Stat Icon={RadioTower} label="Sent" value={r?.events_sent} />
                   <Stat Icon={Inbox} label="Received" value={r?.events_received} />
-                  <Stat Icon={Activity} label="Waiting" value={r?.outbox_pending} warn={!!r && r.outbox_pending > 0} />
+                  <Stat Icon={Activity} label="Outbox" value={r?.outbox_pending} warn={!!r && r.outbox_pending > 0} />
+                  <Stat Icon={Clock} label="Queued" value={r?.queued_claims} warn={!!r && (r.queued_claims ?? 0) > 0} />
                 </div>
 
                 <div className="pt-2">
@@ -153,7 +169,8 @@ export default function StatusPage() {
           <li>Stop a branch: <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">docker compose stop branch-c</code>. Its card turns red within seconds.</li>
           <li>Report a few items at another branch. The other branches update; &quot;Waiting&quot; stays 0.</li>
           <li>Start it again: <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">docker compose start branch-c</code>. It catches up and the banner turns green.</li>
-          <li>Stop RabbitMQ instead and report an item: &quot;Waiting&quot; goes up, then drops to 0 when RabbitMQ is back.</li>
+          <li>Stop RabbitMQ instead and report an item: &quot;Outbox&quot; goes up, then drops to 0 when RabbitMQ is back.</li>
+          <li>Stop Bus Park, then claim one of its items from Campus: the claim is <b>queued</b> (&quot;Queued&quot; goes up). Start Bus Park and it is delivered automatically.</li>
         </ol>
       </div>
     </div>

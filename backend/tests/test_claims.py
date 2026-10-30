@@ -154,7 +154,8 @@ def test_claim_on_other_branch_item_is_forwarded(client, monkeypatch):
 
     monkeypatch.setattr("app.routers.claims.httpx.post", offline)
     r = claim(client, h, item_id, answer="It has my photo as wallpaper")
-    assert r.status_code == 503 and "Bus Park" in r.json()["detail"]
+    # Phase 5: the claim is not refused but QUEUED until Bus Park is back
+    assert r.status_code == 202 and r.json()["queued"] is True and "Bus Park" in r.json()["message"]
 
 
 def test_activity_feed(client, admin_headers):

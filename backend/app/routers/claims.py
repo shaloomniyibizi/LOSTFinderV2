@@ -22,9 +22,10 @@ from sqlalchemy.orm import Session
 from ..announce import BRANCH_NAMES, announce_claim
 from ..config import settings
 from ..database import get_db
-from ..models import Claim, ClaimStatus, Item, ItemStatus, ItemType, Match, Role, User
+from ..models import Claim, ClaimStatus, Item, ItemStatus, ItemType, Match, QueuedRequest, Role, User
 from ..replication import claim_payload, item_payload, record_event
-from ..schemas import ClaimDecision, ClaimIn, ClaimOut
+from ..reliability import monitor, queue_claim
+from ..schemas import ClaimDecision, ClaimIn, ClaimOut, QueuedOut
 from ..security import get_current_user
 
 router = APIRouter(tags=["claims"])
@@ -36,13 +37,24 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _forward(request: Request, home: str, path: str, body: dict | None) -> JSONResponse:
-    """Send the same request to the home branch and return its answer unchanged."""
+class HomeUnreachable(Exception):
+    pass
+
+
+def _forward(request: Request, home: str, path: str, body: dict | None, queue_if_down: bool = False) -> JSONResponse:
+    """Send the same request to the home branch and return its answer unchanged.
+    If the home branch is down: raise HomeUnreachable (claims are then queued) or answer 503."""
     if request.headers.get(FORWARD_HEADER):
         raise HTTPException(409, "Request was forwarded to the wrong branch")
     url = settings.peer_urls.get(home)
     if not url:
         raise HTTPException(503, f"Don't know how to reach branch {home}")
+    down_message = (f"The {BRANCH_NAMES.get(home, home)} branch, which handles this item, is offline right now. "
+                    "Please try again in a few minutes.")
+    if monitor.is_down(home):  # the heartbeat monitor already knows: don't wait for a timeout
+        if queue_if_down:
+            raise HomeUnreachable("marked down by heartbeat monitor")
+        raise HTTPException(503, down_message)
     try:
         r = httpx.post(
             url + path,
@@ -50,12 +62,10 @@ def _forward(request: Request, home: str, path: str, body: dict | None) -> JSONR
             headers={"Authorization": request.headers.get("Authorization", ""), FORWARD_HEADER: settings.branch_id},
             timeout=10,
         )
-    except httpx.HTTPError:
-        raise HTTPException(
-            503,
-            f"The {BRANCH_NAMES.get(home, home)} branch, which handles this item, is offline right now. "
-            "Please try again in a few minutes.",
-        )
+    except httpx.HTTPError as exc:
+        if queue_if_down:
+            raise HomeUnreachable(exc.__class__.__name__)
+        raise HTTPException(503, down_message)
     try:
         content = r.json()
     except ValueError:
@@ -102,7 +112,17 @@ def create_claim(
     if item is None:
         raise HTTPException(404, "Item not found")
     if item.home_branch != settings.branch_id:
-        return _forward(request, item.home_branch, f"/items/{item_id}/claims", data.model_dump())
+        try:
+            return _forward(request, item.home_branch, f"/items/{item_id}/claims", data.model_dump(), queue_if_down=True)
+        except HomeUnreachable as exc:
+            # Phase 5: don't refuse; keep the claim here and deliver it when the home branch is back
+            q = queue_claim(db, item.id, user.id, item.home_branch, data.model_dump(), str(exc))
+            where = BRANCH_NAMES.get(item.home_branch, item.home_branch)
+            return JSONResponse(status_code=202, content={
+                "queued": True, "id": str(q.id), "target_branch": item.home_branch, "status": q.status,
+                "message": f"The {where} branch is offline. Your claim is saved at {BRANCH_NAMES.get(settings.branch_id)} "
+                           f"and will be sent to {where} automatically as soon as it is back.",
+            })
 
     # --- at the home branch: lock the item row until this transaction ends ---
     item = _locked(db, Item, item_id)
@@ -199,6 +219,20 @@ def handover(claim_id: uuid.UUID, request: Request, data: ClaimDecision | None =
 def my_claims(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     claims = db.scalars(select(Claim).where(Claim.claimant_id == user.id).order_by(Claim.created_at.desc())).all()
     return [_to_out(db, c) for c in claims]
+
+
+@router.get("/claims/queued/mine", response_model=list[QueuedOut])
+def my_queued_claims(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Claims you made at THIS branch that are waiting for (or were sent to) an offline home branch."""
+    rows = db.scalars(select(QueuedRequest).where(QueuedRequest.user_id == user.id)
+                      .order_by(QueuedRequest.created_at.desc())).all()
+    out = []
+    for q in rows:
+        item = db.get(Item, q.item_id)
+        out.append(QueuedOut(id=q.id, item_id=q.item_id, item_title=item.title if item else None,
+                             target_branch=q.target_branch, status=q.status, attempts=q.attempts,
+                             last_error=q.last_error, created_at=q.created_at, delivered_at=q.delivered_at))
+    return out
 
 
 @router.get("/claims", response_model=list[ClaimOut])
