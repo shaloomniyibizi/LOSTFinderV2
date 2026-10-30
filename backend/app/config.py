@@ -19,12 +19,25 @@ class Settings:
     )
 
     # Login tokens (JWT)
-    jwt_secret: str = os.getenv("JWT_SECRET", "dev-secret-change-me-0123456789abcdef")
+    jwt_secret: str = os.getenv(
+        "JWT_SECRET", "dev-secret-change-me-0123456789abcdef")
     jwt_algorithm: str = "HS256"
     token_minutes: int = int(os.getenv("TOKEN_MINUTES", "480"))
 
     # RabbitMQ connection. Empty = replication switched off (e.g. when running the tests).
     rabbitmq_url: str = os.getenv("RABBITMQ_URL", "")
+
+    # Photo storage: "local", "cloudinary" or "seaweedfs". Empty = choose automatically
+    # (Cloudinary if CLOUDINARY_URL is set, SeaweedFS if SEAWEEDFS_FILER_URL is set, otherwise local folder).
+    photo_storage: str = os.getenv("PHOTO_STORAGE", "")
+    # cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+    cloudinary_url: str = os.getenv("CLOUDINARY_URL", "")
+    seaweedfs_filer_url: str = os.getenv("SEAWEEDFS_FILER_URL", "")
+    photo_dir: str = os.getenv("PHOTO_DIR", "./photos")
+
+    # Web front end address (allowed to call this API from the browser)
+    frontend_origins: str = os.getenv(
+        "FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 
     # First admin account, created automatically on startup if it doesn't exist
     admin_email: str = os.getenv("ADMIN_EMAIL", "admin@lostfound.local")

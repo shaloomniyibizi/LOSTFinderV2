@@ -2,10 +2,11 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from .. import storage
 from ..config import settings
 from ..database import get_db
 from ..models import Item, ItemStatus, ItemType, Role, User
@@ -99,9 +100,62 @@ def search_items(
     return ItemPage(total=total, items=items)
 
 
+@router.get("/mine", response_model=ItemPage)
+def my_items(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Items reported by the logged-in user, at any branch (copies are on every branch)."""
+    stmt = select(Item).where(Item.reported_by == user.id).order_by(Item.created_at.desc())
+    items = db.scalars(stmt).all()
+    return ItemPage(total=len(items), items=items)
+
+
 @router.get("/{item_id}", response_model=ItemOut)
 def get_item(item_id: uuid.UUID, db: Session = Depends(get_db)):
     return _get_item_or_404(db, item_id)
+
+
+def _check_can_edit(item: Item, user: User) -> tuple[bool, bool]:
+    """Returns (is_reporter, is_branch_staff) or raises 403."""
+    is_reporter = item.reported_by == user.id
+    is_branch_staff = user.role == Role.staff and user.branch_id == item.home_branch
+    if not (is_reporter or is_branch_staff or user.role == Role.admin):
+        raise HTTPException(403, "You are not allowed to edit this item")
+    return is_reporter, is_branch_staff
+
+
+@router.post("/{item_id}/photo", response_model=ItemOut)
+async def upload_photo(
+    item_id: uuid.UUID,
+    file: UploadFile = File(..., description="JPEG, PNG or WebP, up to 5 MB"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Attach a photo to an item (at its home branch).
+    The photo is named by its SHA-256 hash: if the same photo is already stored, it is not stored again."""
+    item = _get_item_or_404(db, item_id)
+    _ensure_home_branch(item)
+    _check_can_edit(item, user)
+
+    data = await file.read(storage.MAX_PHOTO_BYTES + 1)
+    if len(data) > storage.MAX_PHOTO_BYTES:
+        raise HTTPException(413, "Photo is larger than 5 MB")
+    content_type = storage.detect_type(data)
+    if content_type is None:
+        raise HTTPException(415, "Only JPEG, PNG or WebP photos are accepted")
+
+    h = storage.photo_hash(data)
+    try:
+        if not storage.store.exists(h):  # deduplication
+            storage.store.save(h, data, content_type)
+    except storage.StorageError as exc:
+        raise HTTPException(503, f"Photo storage is unavailable, try again later ({exc})")
+
+    if item.photo_hash != h:
+        item.photo_hash = h
+        item.version += 1
+        db.flush()
+        record_event(db, "item.updated", item_payload(item))
+        db.commit()
+    return item
 
 
 @router.patch("/{item_id}", response_model=ItemOut)
@@ -114,11 +168,7 @@ def update_item(
     """Edit an item. Allowed for: the person who reported it, staff of its home branch, or an admin."""
     item = _get_item_or_404(db, item_id)
     _ensure_home_branch(item)
-
-    is_reporter = item.reported_by == user.id
-    is_branch_staff = user.role == Role.staff and user.branch_id == item.home_branch
-    if not (is_reporter or is_branch_staff or user.role == Role.admin):
-        raise HTTPException(403, "You are not allowed to edit this item")
+    is_reporter, is_branch_staff = _check_can_edit(item, user)
 
     changes = data.model_dump(exclude_unset=True)
     if "status" in changes and not (is_branch_staff or user.role == Role.admin):

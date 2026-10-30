@@ -1,49 +1,62 @@
-# Distributed Lost and Found Property Management System
+# LostFinder: Distributed Lost and Found Property Management System
 
 Final project for the Distributed Systems module.
-**Phase 2: Distributed core.** Three branches, each with its own PostgreSQL database, kept in sync through RabbitMQ.
+**Phase 3: Photos and user interface.** Three branches, each with its own PostgreSQL database, kept in sync through RabbitMQ, shared photo storage (a local shared folder, or the free Cloudinary cloud service), and a Next.js + Tailwind CSS web app.
 
-Everything runs on your own computer. Nothing is deployed online and nothing costs money.
+Everything runs on your own computer and nothing costs money. The only optional online part is Cloudinary's free plan for photos.
 
 ```
-            Branch A (Campus)        Branch B (Bus Park)       Branch C (Airport)
-            localhost:8001           localhost:8002            localhost:8003
-                 │                        │                         │
-            database A               database B                database C
-                 │                        │                         │
-                 └──────────── RabbitMQ (localhost:15672) ──────────┘
-                       every change is sent to every branch
+                         Web app (Next.js + Tailwind) — localhost:3000
+                                         │  (choose a branch in the menu)
+             ┌───────────────────────────┼───────────────────────────┐
+     Branch A (Campus)           Branch B (Bus Park)          Branch C (Airport)
+     localhost:8001              localhost:8002               localhost:8003
+             │                           │                           │
+        database A                  database B                  database C
+             │                           │                           │
+             └────────── RabbitMQ: every change goes to every branch ┘
+             └────────── Photos: shared folder (default) or Cloudinary (free cloud) ┘
 ```
 
 ---
 
-## What changed since Phase 1
+## What's new in Phase 3
 
-### One role for the public: `user`
-- The old `owner` and `finder` roles are merged into **`user`**.
-- **Every user can report both LOST and FOUND items.**
-- Roles are now: `user`, `staff` (works at a branch), `admin`.
-- Sign-up always creates a `user`. Staff and admins are created by an admin with `POST /users`.
+### Photo storage
+- Photos are stored **outside the databases**. The database only keeps the photo's **SHA-256 hash**, just like GFS keeps metadata on the master and data on chunkservers.
+- The photo's **name is its hash**, so the same photo uploaded twice is stored **once** (deduplication, as in Dropbox).
+- All branches use the **same photo store**, so every branch can show every photo.
+- Choose where photos live (the code is the same for all three):
 
-### Replication between branches
-- **Items** are copied to every branch: created, updated and deleted.
-- **User accounts** are copied too, so you can sign up at one branch and log in at any branch.
-- Search at any branch finds items from **all** branches. It reads only that branch's own database.
-- Only an item's **home branch** can change it. Other branches refuse with `409`.
-- New endpoint: **`GET /replication/status`** shows the RabbitMQ connection, events sent and received, unsent events, and item counts per home branch.
+  | Option | Setup | Notes |
+  |---|---|---|
+  | **Shared folder** (default) | None | A Docker volume used by all three branches. Works offline. |
+  | **Cloudinary** (free cloud) | Free account + one line in `.env` | 25 free credits a month, no credit card. Photos load from Cloudinary's fast servers. Needs internet. |
+  | **SeaweedFS** (self-hosted) | `--profile seaweedfs` | Optional extra: your own distributed file store. |
 
-## How replication works
+- The file's real type is checked from its first bytes, not its name. Only JPEG, PNG or WebP up to 5 MB are accepted.
+- New endpoints:
+  - `POST /items/{id}/photo`: upload or replace a photo (home branch only; raises the item's `version` and is replicated)
+  - `GET /photos/{hash}`: show a photo (with Cloudinary, it redirects the browser to Cloudinary)
+  - `GET /items/mine`: the logged-in user's reports
+- `GET /health` and the **Network status** page show which photo storage each branch uses.
 
-1. **Outbox.** When a branch saves a change, it also saves an *event* (`item.created`, `item.updated`, `item.deleted` or `user.created`) in its `outbox_events` table, **in the same transaction**. A change is never saved without its event.
-2. **Publisher thread.** A background thread sends unsent events to the RabbitMQ exchange `lostfound.events`. It marks each one as sent after RabbitMQ confirms it. If RabbitMQ is down, events wait in the outbox and go out when it's back.
-3. **One durable queue per branch** (`branch-A`, `branch-B`, `branch-C`). Every event goes to every queue. A queue keeps messages while its branch is offline.
-4. **Consumer thread.** Each branch reads its own queue and applies events from the other branches:
-   - a new item is **inserted**
-   - an existing item is replaced **only if the event's `version` is higher**, so old or duplicate messages are ignored
-   - a deleted item is removed
-   - events from the branch itself are ignored
+### Web app (Next.js 16 + Tailwind CSS 4)
+| Page | What it does |
+|---|---|
+| **Home** `/` | Search bar, live counts, recently found / lost items, branch network |
+| **Browse** `/search` | Search with filters (type, category, colour, status, branch, dates) and pages |
+| **Report** `/report` | Report a lost **or** found item, with drag-and-drop photo |
+| **Item** `/items/{id}` | Photo and details; edit and replace the photo; staff can change the status |
+| **My reports** `/my-items` | Everything you reported, at any branch |
+| **Network status** `/status` | Live dashboard: each branch's heartbeat, RabbitMQ connections, events, and its copy of the data |
+| **Log in / Sign up** | One account works at every branch |
 
-Link to the lecture: replicas on every node (GFS/HDFS), **one primary per item** that orders its changes (GFS primary), **version numbers** to detect stale copies (GFS chunk versions), and **push instead of polling** (Dropbox notifications).
+The distributed system is visible in the web app:
+- A **branch switcher** in the top bar shows which branches are online (green/red dot, response time).
+- If your branch stops responding, a **banner offers to switch** to a branch that is up.
+- An item page says whether you're looking at the **original** (home branch) or **a copy**. To edit it, the app sends you to its home branch.
+- The **Network status** page shows in real time when a branch goes down, catches up, or when events wait in the outbox.
 
 ---
 
@@ -51,120 +64,108 @@ Link to the lecture: replicas on every node (GFS/HDFS), **one primary per item**
 
 ```
 lostfinder/
-├── docker-compose.yml          # 3 databases + 3 branches + RabbitMQ
+├── docker-compose.yml          # 3 databases + 3 branches + RabbitMQ (+ optional SeaweedFS)
+├── .env.example                # copy to .env to use Cloudinary for photos
 ├── README.md
+├── docs/screenshots/           # screenshots for your report
 ├── scripts/
-│   └── demo_replication.py     # automatic Phase 2 demo
-└── backend/
-    ├── Dockerfile
-    ├── requirements.txt
-    ├── app/
-    │   ├── main.py             # starts the app and the replication threads
-    │   ├── config.py           # BRANCH_ID, DATABASE_URL, RABBITMQ_URL, JWT
-    │   ├── database.py
-    │   ├── models.py           # tables, including outbox_events
-    │   ├── schemas.py
-    │   ├── security.py
-    │   ├── replication.py      # outbox, publisher, consumer, applying events
-    │   └── routers/
-    │       ├── health.py
-    │       ├── auth.py
-    │       ├── branches.py
-    │       ├── items.py
-    │       └── replication.py  # GET /replication/status
-    └── tests/
-        ├── conftest.py
-        ├── test_phase1.py
-        └── test_replication.py
+│   ├── seed_demo.py            # fills the system with demo users and items
+│   └── demo_replication.py     # automatic replication demo (Phase 2)
+├── backend/                    # FastAPI branch server (same code for A, B and C)
+│   ├── app/
+│   │   ├── main.py, config.py, database.py, models.py, schemas.py, security.py
+│   │   ├── replication.py      # outbox, publisher, consumer
+│   │   ├── storage.py          # photo storage: shared folder, Cloudinary or SeaweedFS
+│   │   └── routers/            # health, auth, branches, items, photos, replication
+│   └── tests/                  # 50 automated tests
+└── frontend/                   # Next.js + Tailwind web app
+    ├── package.json
+    └── src/
+        ├── app/                # pages: /, search, report, items/[id], my-items, status, login, register
+        ├── components/         # Navbar, BranchSwitcher, ItemCard, PhotoPicker, badges…
+        └── lib/                # API helper, branch list, login state, heartbeat checker
 ```
 
 ---
 
-## Upgrading from Phase 1
+## How to run it
 
-The database layout changed (new roles, new `outbox_events` table), so start with empty databases:
+You need **Docker Desktop** (running) and **Node.js 20 or newer** (free, from nodejs.org).
 
+### 1. Start the back end (branches, databases, RabbitMQ)
+In the folder that contains `docker-compose.yml`:
 ```powershell
-cd lostfinder
-docker compose down -v          # removes the old Phase 1 containers AND their data
+docker compose down -v        # only the first time after upgrading from Phase 2: starts with empty databases
 docker compose up --build
 ```
+Wait until each branch shows `consumer listening on branch-A` (and `branch-B`, `branch-C`). A few `retrying in 3s` warnings at the start are normal while RabbitMQ boots.
 
-If you changed the database user or password in your Phase 1 `docker-compose.yml`, use the new file as it is. It uses `postgres` / `postgres` for all three databases.
-
----
-
-## Run with Docker (recommended)
-
-Run this **in the folder that contains `docker-compose.yml`** (not inside `backend`):
-
+### 2. Start the web app (in a second terminal)
 ```powershell
-docker compose up --build
+cd frontend
+npm install          # only the first time (downloads about 150 MB)
+npm run dev
 ```
+Open **http://localhost:3000**.
 
-Wait until you see `Uvicorn running` three times and `consumer listening on branch-A`, `branch-B` and `branch-C`. Then open:
-
-| What | Address |
-|---|---|
-| Branch A (Campus) API | http://localhost:8001/docs |
-| Branch B (Bus Park) API | http://localhost:8002/docs |
-| Branch C (Airport) API | http://localhost:8003/docs |
-| RabbitMQ dashboard | http://localhost:15672 (login `guest` / `guest`) |
-
-Default admin on every branch: `admin@lostfound.local` / `admin123`.
-
-## Run without Docker
-
-You need PostgreSQL and RabbitMQ installed on your computer.
-
-1. Create three databases: `branch_a`, `branch_b`, `branch_c`.
-2. Install the packages once: `cd backend`, then `pip install -r requirements.txt`.
-3. Open **three terminals** in `backend` and start one branch in each (Windows PowerShell shown; use your PostgreSQL password):
-   ```powershell
-   # Terminal 1: Branch A
-   $env:BRANCH_ID="A"; $env:BRANCH_NAME="Campus"
-   $env:DATABASE_URL="postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/branch_a"
-   $env:RABBITMQ_URL="amqp://guest:guest@localhost:5672/"
-   uvicorn app.main:app --port 8001
-   ```
-   For terminals 2 and 3, use `B` / `Bus Park` / `branch_b` / port `8002` and `C` / `Airport` / `branch_c` / port `8003`.
-
----
-
-## Phase 2 demo
-
-### Automatic demo
-With the system running, in another terminal:
+### 3. Add demo data (optional, in a third terminal)
 ```powershell
 pip install httpx
-python scripts/demo_replication.py
+python scripts/seed_demo.py
 ```
-It signs up a user at A, logs in at B and C, reports a FOUND laptop at B and a LOST phone at A, checks that every branch has copies, updates the laptop at B, and shows that A refuses to edit it.
+This creates 12 items across the three branches and two accounts: `aline@demo.rw` and `eric@demo.rw`, password `demo1234`.
 
-### By hand (in the browser)
-1. **http://localhost:8001/docs** → `POST /auth/register` → create an account.
-2. **http://localhost:8002/docs** → **Authorize** → log in with the same account. It works, because the account was copied.
-3. On Branch B → `POST /items` → report a FOUND item. Note `"home_branch": "B"`.
-4. **http://localhost:8003/docs** → `GET /items` → the item is there.
-5. On Branch B → `PATCH /items/{id}` → change the location. On A or C, `GET /items/{id}` shows `"version": 2`.
-6. On Branch A → `PATCH` the same item → `409`: *This item belongs to branch B*.
+### Useful addresses
+| What | Address |
+|---|---|
+| Web app | http://localhost:3000 |
+| Branch APIs | http://localhost:8001/docs, :8002/docs, :8003/docs |
+| RabbitMQ dashboard | http://localhost:15672 (guest / guest) |
+| Admin account (every branch) | `admin@lostfound.local` / `admin123` |
 
-### Failure demo 1: a branch goes down and catches up
-```powershell
-docker compose stop branch-c
-# report 2–3 items at Branch A or B (http://localhost:8001/docs)
-docker compose start branch-c
-```
-After a few seconds, `GET /items` on Branch C (http://localhost:8003/docs) shows the items it missed. RabbitMQ kept them in queue `branch-C` (look at *Queues* in the dashboard while C is stopped).
+To make someone **staff** of a branch (so they can change an item's status), log in as admin at http://localhost:8001/docs and use `POST /users` with `"role": "staff", "branch_id": "A"`.
 
-### Failure demo 2: RabbitMQ goes down
-```powershell
-docker compose stop rabbitmq
-# report an item at Branch A: it still works
-# http://localhost:8001/replication/status shows "outbox_pending": 1
-docker compose start rabbitmq
-```
-Within a few seconds the event is sent, `outbox_pending` goes back to 0, and the item appears on B and C.
+---
+
+## Using Cloudinary (free cloud) for photos
+
+1. Create a free account at **https://cloudinary.com/users/register_free**. No credit card is needed.
+2. Open **https://console.cloudinary.com**, click the **gear icon (Settings) → API Keys**, and copy the **API environment variable**. It looks like:
+   ```
+   cloudinary://123456789012345:AbCdEfGhIjKlMnOpQrStUvWxYz0@your-cloud-name
+   ```
+3. In the folder that contains `docker-compose.yml`, copy `.env.example` to a new file named **`.env`** and paste the value after `CLOUDINARY_URL=`:
+   ```
+   CLOUDINARY_URL=cloudinary://123456789012345:AbCdEfGhIjKlMnOpQrStUvWxYz0@your-cloud-name
+   ```
+4. Restart the branches so they read it:
+   ```powershell
+   docker compose up -d --force-recreate branch-a branch-b branch-c
+   ```
+5. Check **http://localhost:3000/status**: every branch should show **Photo storage: cloudinary**.
+6. Upload a photo in the web app. It appears in Cloudinary's **Media Library**, in the `lostfinder` folder.
+
+Keep `.env` private: it contains your secret key. It is already listed in `.gitignore`, so it won't be uploaded to GitHub. To go back to the shared folder, empty the line in `.env` and run step 4 again.
+
+## Phase 3 demo (for the presentation)
+
+1. Open **http://localhost:3000/status** in one window. All three branches are green and "in sync".
+2. In another window, log in as `aline@demo.rw` with **Campus** selected, report a **found** item and drag a photo onto the form.
+3. The item page says *"original at its home branch, Campus"*. The status page shows Campus's count go up on all three cards.
+4. Switch to **Bus Park** in the top bar and open the same item. It's now *"Bus Park's copy"*, the photo still shows, and **Edit** says to switch to Campus.
+5. **Failure:** run `docker compose stop branch-c`. Its card turns red. Select Airport in the app: a banner offers to switch to another branch.
+6. Report an item at Campus, then `docker compose start branch-c`. Airport catches up and the status page shows "in sync" again.
+7. **Deduplication:** upload the same photo to two items. With Cloudinary, its *Media Library* shows one file in the `lostfinder` folder.
+
+---
+
+## How replication works (from Phase 2)
+
+1. **Outbox:** a change and its event (`item.created`, `item.updated`, `item.deleted`, `user.created`) are saved in the same transaction.
+2. **Publisher thread:** sends unsent events to RabbitMQ and marks them sent once RabbitMQ confirms. If RabbitMQ is down, events wait.
+3. **One durable queue per branch:** every event reaches every branch, and queues keep messages for branches that are offline.
+4. **Consumer thread:** applies other branches' events. New items are inserted; an item is replaced **only if the incoming `version` is higher**, so old and duplicate messages are ignored.
+5. **Only the home branch changes an item** (it is the "primary", like in GFS). Other branches refuse with `409`.
 
 ---
 
@@ -173,33 +174,59 @@ Within a few seconds the event is sent, `outbox_pending` goes back to 0, and the
 | Method | Path | Who | What |
 |---|---|---|---|
 | GET | `/health` | anyone | Branch heartbeat |
-| GET | `/branches` | anyone | List branches A, B, C |
+| GET | `/branches` | anyone | Branches A, B, C |
 | POST | `/auth/register` | anyone | Sign up (role is always `user`) |
-| POST | `/auth/login` | anyone | Get a JWT token (works at any branch) |
+| POST | `/auth/login` | anyone | JWT token (works at every branch) |
 | GET | `/auth/me` | logged in | Your account |
-| POST | `/users` | admin | Create `user`, `staff` (with `branch_id`) or `admin` accounts |
-| GET | `/users` | admin | List users |
-| POST | `/items` | any logged-in user | Report a LOST **or** FOUND item |
-| GET | `/items` | anyone | Search all branches' items: `q`, `type`, `category`, `colour`, `status`, `branch`, `date_from`, `date_to` |
+| POST / GET | `/users` | admin | Create or list accounts (`user`, `staff` + `branch_id`, `admin`) |
+| POST | `/items` | logged in | Report a LOST or FOUND item |
+| GET | `/items` | anyone | Search all branches' items |
+| GET | `/items/mine` | logged in | Your reports |
 | GET | `/items/{id}` | anyone | One item |
-| PATCH | `/items/{id}` | reporter, staff of the home branch, admin | Edit (only at the home branch); raises `version` |
-| DELETE | `/items/{id}` | admin | Delete (only at the home branch) |
-| GET | `/replication/status` | anyone | Replication health and counters |
+| PATCH | `/items/{id}` | reporter, home-branch staff, admin | Edit (home branch only; status: staff/admin) |
+| POST | `/items/{id}/photo` | reporter, home-branch staff, admin | Upload or replace the photo (home branch only) |
+| DELETE | `/items/{id}` | admin | Delete (home branch only) |
+| GET | `/photos/{hash}` | anyone | A photo |
+| GET | `/replication/status` | anyone | Replication counters and connection state |
 
 ---
 
-## Tests
+## Running without Docker
+Install PostgreSQL and RabbitMQ, then:
+1. Create databases `branch_a`, `branch_b`, `branch_c`.
+2. Choose one photo folder for all three branches, e.g. `D:\lostfinder-photos` (or set `CLOUDINARY_URL` for Cloudinary).
+3. In `backend`, run `pip install -r requirements.txt`, then start each branch in its own terminal (PowerShell example for A):
+   ```powershell
+   $env:BRANCH_ID="A"; $env:BRANCH_NAME="Campus"
+   $env:DATABASE_URL="postgresql+psycopg://postgres:YOUR_PASSWORD@localhost:5432/branch_a"
+   $env:RABBITMQ_URL="amqp://guest:guest@localhost:5672/"
+   $env:PHOTO_DIR="D:\lostfinder-photos"     # the SAME folder for A, B and C
+   uvicorn app.main:app --port 8001
+   ```
+   Repeat with `B` / `branch_b` / `8002` and `C` / `branch_c` / `8003`.
+4. Start the web app as in step 2 above.
 
+### Optional: SeaweedFS instead
+Run `docker compose --profile seaweedfs up` and add `PHOTO_STORAGE=seaweedfs` to `.env`.
+
+## Tests
 ```powershell
 cd backend
-python -m pytest -q
+python -m pytest -q        # 50 passed (no PostgreSQL, RabbitMQ or internet needed)
+cd ../frontend
+npm run lint               # TypeScript check
+npm run build              # production build
 ```
-Expected: `29 passed`. The tests use a temporary SQLite file and don't need PostgreSQL or RabbitMQ.
 
-## Notes and limits (for the report)
-- If the same email signs up at two branches before they sync, each branch keeps its own account and logs a conflict warning. This is rare and acceptable for the project.
-- Password **hashes** travel through RabbitMQ so users can log in anywhere. RabbitMQ stays on the private Docker network and is never exposed online.
-- A brand-new branch receives events from the moment its queue exists. All three queues are created as soon as any branch starts, so A, B and C never miss anything.
+## Troubleshooting
+- **Web app shows every branch as offline:** the back end isn't running. Start it with `docker compose up`.
+- **Branch APIs work but the web app gets errors in the browser:** open the web app at `http://localhost:3000`, not by IP address. The branches only accept that address (setting `FRONTEND_ORIGINS`).
+- **Photo upload fails:** the web app shows the reason under the photo. Check what **Network status** says under *Photo storage*.
+  - *"Cloudinary refused the upload: Invalid Signature"* or *"Unknown API key"*: the `CLOUDINARY_URL` in `.env` is mistyped. Copy it again from the Cloudinary console, then restart the branches (Cloudinary step 4).
+  - *"Cloudinary unreachable"*: no internet. Empty `CLOUDINARY_URL` to use the shared folder instead.
+  - *"Only JPEG, PNG or WebP photos are accepted"*: the file is another format (e.g. HEIC from an iPhone). Save it as JPEG first.
+  - *"Photo is larger than 5 MB"*: use a smaller photo.
+- **RabbitMQ: `.erlang.cookie: eacces`:** already handled by `RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS` in `docker-compose.yml`.
 
-## Next: Phase 3
-Photo storage with SeaweedFS (hash-named files, deduplication) and the Next.js front end.
+## Next: Phase 4
+Matching between lost and found items, live notifications (WebSockets), and safe claims (one successful claim per item).

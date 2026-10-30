@@ -1,9 +1,14 @@
-# Phase 2: THREE branches, each with its OWN PostgreSQL database, connected by RabbitMQ.
+# THREE branches, each with its OWN PostgreSQL database, connected by RabbitMQ.
+# Photos: a folder shared by the three branches (default), or Cloudinary (free cloud) if you put
+# CLOUDINARY_URL in a ".env" file next to this one. The web app (Next.js) runs separately: see README.
 #
 #   Branch A (Campus)   -> http://localhost:8001/docs   database db-a (port 5433)
 #   Branch B (Bus Park) -> http://localhost:8002/docs   database db-b (port 5434)
 #   Branch C (Airport)  -> http://localhost:8003/docs   database db-c (port 5435)
 #   RabbitMQ dashboard  -> http://localhost:15672       (login guest / guest)
+#
+# Optional self-hosted photo store instead: docker compose --profile seaweedfs up
+#   (and set PHOTO_STORAGE=seaweedfs in .env)
 #
 # Start:            docker compose up --build
 # Stop:             docker compose down
@@ -22,6 +27,11 @@ x-db: &db
 x-branch-env: &branch-env
   JWT_SECRET: dev-secret-change-me-0123456789abcdef   # must be the SAME on all branches
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  # Photo storage. Leave CLOUDINARY_URL empty to use the shared "photos-data" folder.
+  PHOTO_STORAGE: ${PHOTO_STORAGE:-}                     # local | cloudinary | seaweedfs (empty = automatic)
+  CLOUDINARY_URL: ${CLOUDINARY_URL:-}                   # read from the .env file
+  SEAWEEDFS_FILER_URL: http://seaweedfs:8888            # only used with PHOTO_STORAGE=seaweedfs
+  PHOTO_DIR: /data/photos                               # the shared folder
   ADMIN_EMAIL: admin@lostfound.local
   ADMIN_PASSWORD: admin123
 
@@ -39,6 +49,19 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+
+  # ---------- OPTIONAL photo store: SeaweedFS (only starts with --profile seaweedfs) ----------
+  seaweedfs:
+    profiles: ["seaweedfs"]
+    image: chrislusf/seaweedfs:4.47
+    entrypoint: ["/usr/bin/weed"]
+    command: ["server", "-dir=/data", "-filer", "-ip=seaweedfs", "-ip.bind=0.0.0.0",
+              "-master.volumeSizeLimitMB=100", "-volume.max=20"]
+    ports:
+      - "8888:8888"   # filer: browse photos at http://localhost:8888/lostfound/photos/
+      - "9333:9333"   # master status page
+    volumes:
+      - seaweedfs-data:/data
 
   # ---------- databases: one per branch ----------
   db-a:
@@ -68,6 +91,7 @@ services:
       BRANCH_NAME: Campus
       DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-a:5432/branch_a
     ports: ["8001:8000"]
+    volumes: [photos-data:/data/photos]   # same photo folder for all branches
     depends_on:
       db-a: { condition: service_healthy }
       rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
@@ -80,6 +104,7 @@ services:
       BRANCH_NAME: Bus Park
       DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-b:5432/branch_b
     ports: ["8002:8000"]
+    volumes: [photos-data:/data/photos]   # same photo folder for all branches
     depends_on:
       db-b: { condition: service_healthy }
       rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
@@ -92,11 +117,14 @@ services:
       BRANCH_NAME: Airport
       DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-c:5432/branch_c
     ports: ["8003:8000"]
+    volumes: [photos-data:/data/photos]   # same photo folder for all branches
     depends_on:
       db-c: { condition: service_healthy }
       rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
 
 volumes:
+  photos-data:
+  seaweedfs-data:
   db-a-data:
   db-b-data:
   db-c-data:
