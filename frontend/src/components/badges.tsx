@@ -30,6 +30,16 @@ export function StatusBadge({ status }: { status: ItemStatus }) {
   );
 }
 
+export function ClaimBadge({ status, handedOver }: { status: "PENDING" | "APPROVED" | "REJECTED"; handedOver?: boolean }) {
+  if (handedOver) return <span className="chip bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"><CheckCircle2 className="h-3 w-3" /> Handed over</span>;
+  const s = {
+    PENDING: { label: "Being checked", cls: "bg-amber-50 text-amber-800 ring-amber-200" },
+    APPROVED: { label: "Approved: ready to collect", cls: "bg-sky-50 text-sky-700 ring-sky-200" },
+    REJECTED: { label: "Not accepted", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
+  }[status];
+  return <span className={`chip ring-1 ${s.cls}`}>{s.label}</span>;
+}
+
 export function BranchChip({ id }: { id: string }) {
   return (
     <span className="chip bg-slate-100 text-slate-600 ring-1 ring-slate-200" title={`Home branch: ${branchName(id)}`}>

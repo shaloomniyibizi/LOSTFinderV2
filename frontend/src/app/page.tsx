@@ -28,14 +28,21 @@ export default function HomePage() {
       get("type=FOUND&limit=4"),
       get("type=LOST&limit=4"),
       get("type=LOST&status=OPEN&limit=1"),
+      get("type=LOST&status=MATCHED&limit=1"),
       get("type=FOUND&status=OPEN&limit=1"),
+      get("type=FOUND&status=MATCHED&limit=1"),
       get("status=RETURNED&limit=1"),
     ])
-      .then(([f, l, openLost, openFound, returned]) => {
+      .then(([f, l, openLost, matchedLost, openFound, matchedFound, returned]) => {
         if (cancelled) return;
         setFound(f.items);
         setLost(l.items);
-        setStats({ lost: openLost.total, found: openFound.total, returned: returned.total });
+        // still being searched for = open or matched (not yet claimed or returned)
+        setStats({
+          lost: openLost.total + matchedLost.total,
+          found: openFound.total + matchedFound.total,
+          returned: returned.total,
+        });
       })
       .catch(() => {
         if (cancelled) return;

@@ -6,10 +6,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { useApp } from "@/lib/app-context";
 import BranchSwitcher from "./BranchSwitcher";
+import NotificationBell from "./NotificationBell";
 
 const LINKS = [
   { href: "/search", label: "Browse items" },
   { href: "/my-items", label: "My reports", auth: true },
+  { href: "/staff", label: "Staff desk", staff: true },
   { href: "/status", label: "Network status" },
 ];
 
@@ -19,7 +21,8 @@ export default function Navbar() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
-  const links = LINKS.filter((l) => !l.auth || user);
+  const isStaff = user?.role === "staff" || user?.role === "admin";
+  const links = LINKS.filter((l) => (!l.auth || user) && (!l.staff || isStaff));
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
 
   function signOut() {
@@ -61,7 +64,8 @@ export default function Navbar() {
             <Plus className="h-4 w-4" /> Report item
           </Link>
           {user ? (
-            <div className="flex items-center gap-2 pl-2">
+            <div className="flex items-center gap-1 pl-1">
+              <NotificationBell />
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-sm font-semibold text-slate-700" title={user.email}>
                 {user.full_name.charAt(0).toUpperCase()}
               </span>
@@ -76,7 +80,8 @@ export default function Navbar() {
           )}
         </div>
 
-        <button className="btn-ghost ml-auto px-2.5 md:hidden" onClick={() => setOpen(!open)} aria-label="Menu">
+        {user && <div className="ml-auto md:hidden"><NotificationBell /></div>}
+        <button className={`btn-ghost px-2.5 md:hidden ${user ? "" : "ml-auto"}`} onClick={() => setOpen(!open)} aria-label="Menu">
           {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
       </nav>

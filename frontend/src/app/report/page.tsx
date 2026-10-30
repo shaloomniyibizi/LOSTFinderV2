@@ -33,6 +33,7 @@ function ReportForm() {
   const [eventDate, setEventDate] = useState(todayIso());
   const [location, setLocation] = useState("");
   const [description, setDescription] = useState("");
+  const [question, setQuestion] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +45,10 @@ function ReportForm() {
     try {
       const item = await api<Item>("/items", {
         method: "POST",
-        json: { type, title, category, colour: colour || null, event_date: eventDate, location, description },
+        json: {
+          type, title, category, colour: colour || null, event_date: eventDate, location, description,
+          verification_question: type === "FOUND" ? question.trim() || null : null,
+        },
       });
       if (photo) {
         setBusy("Uploading the photo…");
@@ -140,6 +144,16 @@ function ReportForm() {
                 ? "Brand, model, stickers, scratches, what was inside… Keep one detail secret so you can prove it's yours."
                 : "Describe it, but leave out one detail so the real owner can prove it's theirs."} />
           </div>
+          {!isLost && (
+            <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4">
+              <label className="label" htmlFor="question">Question for the owner <span className="font-normal text-slate-400">(recommended)</span></label>
+              <input id="question" className="input" maxLength={300} value={question} onChange={(e) => setQuestion(e.target.value)}
+                placeholder="e.g. What sticker is on the lid? What is the phone's wallpaper?" />
+              <p className="mt-1.5 text-xs text-slate-500">
+                Anyone who claims the item must answer it. Staff compare the answer before handing the item over, so don&apos;t put the answer in the description.
+              </p>
+            </div>
+          )}
           <div>
             <span className="label">Photo <span className="font-normal text-slate-400">(optional, but helps a lot)</span></span>
             <PhotoPicker file={photo} onChange={setPhoto} />

@@ -8,12 +8,15 @@ import { useParams, useSearchParams } from "next/navigation";
 import { type FormEvent, type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import { BranchChip, StatusBadge, TypeBadge } from "@/components/badges";
 import CategoryIcon from "@/components/CategoryIcon";
+import ClaimPanel from "@/components/ClaimPanel";
+import ItemMatches from "@/components/ItemMatches";
 import PhotoPicker from "@/components/PhotoPicker";
 import { Alert, EmptyState, Spinner } from "@/components/ui";
 import { ApiError, isOffline, photoUrl } from "@/lib/api";
 import { canEdit, isStaffFor, useApp } from "@/lib/app-context";
 import { branchName, CATEGORIES, COLOURS } from "@/lib/branches";
 import { capitalize, formatDate, timeAgo, todayIso } from "@/lib/format";
+import { useNotifications } from "@/lib/notifications";
 import type { Item, ItemStatus } from "@/lib/types";
 
 export default function ItemPage() {
@@ -61,6 +64,15 @@ function ItemView() {
     setBroken(false);
     load();
   }, [load]);
+
+  // Quietly refresh the item after a claim, or when a live notification arrives
+  const { liveVersion } = useNotifications();
+  const reload = useCallback(() => {
+    api<Item>(`/items/${id}`).then(setItem).catch(() => {});
+  }, [api, id]);
+  useEffect(() => {
+    if (liveVersion > 0) reload();
+  }, [liveVersion, reload]);
 
   if (notFound) {
     return (
@@ -177,6 +189,8 @@ function ItemView() {
           )}
 
           {editable && atHome && isStaffFor(user, item.home_branch) && <StatusControl item={item} onSaved={setItem} />}
+
+          <ClaimPanel item={item} onItemChanged={reload} />
         </div>
       </div>
 
@@ -186,6 +200,8 @@ function ItemView() {
           <PhotoUpload item={item} onSaved={(it) => { setItem(it); setBroken(false); }} />
         </div>
       )}
+
+      <ItemMatches item={item} />
     </div>
   );
 }

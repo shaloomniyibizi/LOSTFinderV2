@@ -139,7 +139,7 @@ export default function StatusPage() {
                 </div>
 
                 <p className="flex items-center gap-1.5 pt-1 text-xs text-slate-500">
-                  <Users className="h-3.5 w-3.5" /> {s?.online ? `${r?.users ?? 0} user accounts` : "Unknown"}
+                  <Users className="h-3.5 w-3.5" /> {s?.online ? `${r?.users ?? 0} user accounts · ${r?.websocket_clients ?? 0} live connection${r?.websocket_clients === 1 ? "" : "s"}` : "Unknown"}
                 </p>
               </div>
             </div>
