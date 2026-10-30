@@ -1,0 +1,40 @@
+# Phase 1: ONE branch (Campus) with its own PostgreSQL database.
+# Phase 2 adds db-b/branch-b, db-c/branch-c and RabbitMQ — the same pattern copied.
+#
+# Start:  docker compose up --build
+# API docs: http://localhost:8001/docs
+
+services:
+  db-a:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: branch_a
+      POSTGRES_USER: LostFinder
+      POSTGRES_PASSWORD: LostFinder_2026
+    ports:
+      - "5433:5432"          # reach it from your laptop on port 5433 (e.g. with pgAdmin)
+    volumes:
+      - db-a-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U LostFinder -d branch_a"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  branch-a:
+    build: ./backend
+    environment:
+      BRANCH_ID: A
+      BRANCH_NAME: Campus
+      DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-a:5432/branch_a
+      JWT_SECRET: dev-secret-change-me-0123456789abcdef
+      ADMIN_EMAIL: admin@lostfound.local
+      ADMIN_PASSWORD: admin123
+    ports:
+      - "8001:8000"
+    depends_on:
+      db-a:
+        condition: service_healthy
+
+volumes:
+  db-a-data:
