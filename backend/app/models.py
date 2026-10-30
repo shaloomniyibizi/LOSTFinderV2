@@ -10,7 +10,7 @@ import enum
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import JSON, Date, DateTime, Enum, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -21,8 +21,7 @@ def utcnow() -> datetime:
 
 
 class Role(str, enum.Enum):
-    owner = "owner"    # lost something
-    finder = "finder"  # found something
+    user = "user"      # any member of the public: can report LOST and FOUND items
     staff = "staff"    # works at a branch office
     admin = "admin"    # manages the whole system
 
@@ -66,7 +65,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(200))
-    role: Mapped[Role] = mapped_column(_enum(Role), default=Role.owner)
+    role: Mapped[Role] = mapped_column(_enum(Role), default=Role.user)
     branch_id: Mapped[str | None] = mapped_column(ForeignKey("branches.id"), nullable=True)  # staff only
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -106,6 +105,24 @@ class Claim(Base):
     handled_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)  # staff member
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OutboxEvent(Base):
+    """Events waiting to be sent to the other branches (the 'outbox pattern').
+
+    An event is saved in the SAME database transaction as the change it describes,
+    so a change can never be saved without its event (or the other way round).
+    A background thread sends unsent events to RabbitMQ and marks them sent.
+    If RabbitMQ is down, events simply wait here and go out when it comes back.
+    """
+    __tablename__ = "outbox_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # keeps send order
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, default=uuid.uuid4, unique=True)
+    event_type: Mapped[str] = mapped_column(String(40))  # item.created, item.updated, item.deleted, user.created
+    payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class Match(Base):

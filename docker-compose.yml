@@ -1,40 +1,102 @@
-# Phase 1: ONE branch (Campus) with its own PostgreSQL database.
-# Phase 2 adds db-b/branch-b, db-c/branch-c and RabbitMQ — the same pattern copied.
+# Phase 2: THREE branches, each with its OWN PostgreSQL database, connected by RabbitMQ.
 #
-# Start:  docker compose up --build
-# API docs: http://localhost:8001/docs
+#   Branch A (Campus)   -> http://localhost:8001/docs   database db-a (port 5433)
+#   Branch B (Bus Park) -> http://localhost:8002/docs   database db-b (port 5434)
+#   Branch C (Airport)  -> http://localhost:8003/docs   database db-c (port 5435)
+#   RabbitMQ dashboard  -> http://localhost:15672       (login guest / guest)
+#
+# Start:            docker compose up --build
+# Stop:             docker compose down
+# Wipe all data:    docker compose down -v
+# Simulate a crash: docker compose stop branch-b   (then: docker compose start branch-b)
+
+x-db: &db
+  image: postgres:16
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+    interval: 5s
+    timeout: 10s
+    retries: 30
+    start_period: 120s   # first-time setup can be slow on Windows; failures here don't count
+
+x-branch-env: &branch-env
+  JWT_SECRET: dev-secret-change-me-0123456789abcdef   # must be the SAME on all branches
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  ADMIN_EMAIL: admin@lostfound.local
+  ADMIN_PASSWORD: admin123
 
 services:
-  db-a:
-    image: postgres:16
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq            # fixed name so stored messages survive restarts
     environment:
-      POSTGRES_DB: branch_a
-      POSTGRES_USER: LostFinder
-      POSTGRES_PASSWORD: LostFinder_2026
+      # Give RabbitMQ its internal secret ("Erlang cookie") directly, so it never has to read
+      # /var/lib/rabbitmq/.erlang.cookie. On some Windows setups that file can't be read
+      # ("Error when reading .erlang.cookie: eacces") and RabbitMQ refuses to start.
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-setcookie lostfinder-secret-cookie"
+    # No volume and no health check on purpose (both need that cookie file).
+    # Queued messages still survive "docker compose stop/start"; only "down" clears them.
     ports:
-      - "5433:5432"          # reach it from your laptop on port 5433 (e.g. with pgAdmin)
-    volumes:
-      - db-a-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U LostFinder -d branch_a"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      - "5672:5672"
+      - "15672:15672"
 
+  # ---------- databases: one per branch ----------
+  db-a:
+    <<: *db
+    environment: { POSTGRES_DB: branch_a, POSTGRES_USER: LostFinder, POSTGRES_PASSWORD: LostFinder_2026 }
+    ports: ["5433:5432"]
+    volumes: [db-a-data:/var/lib/postgresql/data]
+
+  db-b:
+    <<: *db
+    environment: { POSTGRES_DB: branch_b, POSTGRES_USER: LostFinder, POSTGRES_PASSWORD: LostFinder_2026 }
+    ports: ["5434:5432"]
+    volumes: [db-b-data:/var/lib/postgresql/data]
+
+  db-c:
+    <<: *db
+    environment: { POSTGRES_DB: branch_c, POSTGRES_USER: LostFinder, POSTGRES_PASSWORD: LostFinder_2026 }
+    ports: ["5435:5432"]
+    volumes: [db-c-data:/var/lib/postgresql/data]
+
+  # ---------- branches: the SAME code, different settings ----------
   branch-a:
     build: ./backend
     environment:
+      <<: *branch-env
       BRANCH_ID: A
       BRANCH_NAME: Campus
       DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-a:5432/branch_a
-      JWT_SECRET: dev-secret-change-me-0123456789abcdef
-      ADMIN_EMAIL: admin@lostfound.local
-      ADMIN_PASSWORD: admin123
-    ports:
-      - "8001:8000"
+    ports: ["8001:8000"]
     depends_on:
-      db-a:
-        condition: service_healthy
+      db-a: { condition: service_healthy }
+      rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
+
+  branch-b:
+    build: ./backend
+    environment:
+      <<: *branch-env
+      BRANCH_ID: B
+      BRANCH_NAME: Bus Park
+      DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-b:5432/branch_b
+    ports: ["8002:8000"]
+    depends_on:
+      db-b: { condition: service_healthy }
+      rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
+
+  branch-c:
+    build: ./backend
+    environment:
+      <<: *branch-env
+      BRANCH_ID: C
+      BRANCH_NAME: Airport
+      DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-c:5432/branch_c
+    ports: ["8003:8000"]
+    depends_on:
+      db-c: { condition: service_healthy }
+      rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
 
 volumes:
   db-a-data:
+  db-b-data:
+  db-c-data:

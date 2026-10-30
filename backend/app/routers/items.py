@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..models import Item, ItemStatus, ItemType, Role, User
+from ..replication import item_payload, record_event
 from ..schemas import ItemIn, ItemOut, ItemPage, ItemUpdate
 from ..security import get_current_user, require_roles
 
@@ -33,7 +34,8 @@ def _ensure_home_branch(item: Item) -> None:
 
 @router.post("", response_model=ItemOut, status_code=201)
 def report_item(data: ItemIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """Report a LOST or FOUND item. This branch becomes its home branch."""
+    """Report a LOST or FOUND item. Any logged-in user can report either type.
+    This branch becomes the item's home branch, and a copy is sent to the other branches."""
     if data.event_date > date.today():
         raise HTTPException(422, "event_date cannot be in the future")
     item = Item(
@@ -49,6 +51,8 @@ def report_item(data: ItemIn, db: Session = Depends(get_db), user: User = Depend
         reported_by=user.id,
     )
     db.add(item)
+    db.flush()  # fills in id and timestamps
+    record_event(db, "item.created", item_payload(item))  # tell the other branches
     db.commit()
     return item
 
@@ -129,6 +133,8 @@ def update_item(
             value = value.strip().lower()
         setattr(item, field, value)
     item.version += 1  # every change makes a newer version
+    db.flush()
+    record_event(db, "item.updated", item_payload(item))
     db.commit()
     return item
 
@@ -141,5 +147,6 @@ def delete_item(
 ):
     item = _get_item_or_404(db, item_id)
     _ensure_home_branch(item)
+    record_event(db, "item.deleted", {"id": str(item.id), "version": item.version + 1})
     db.delete(item)
     db.commit()

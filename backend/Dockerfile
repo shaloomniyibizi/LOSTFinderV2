@@ -4,7 +4,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
-# Generous timeout and retries: downloads from PyPI can be slow on campus networks.
+# Long timeout + retries help on slow internet connections
 RUN pip install --no-cache-dir --default-timeout=120 --retries 10 -r requirements.txt
 
 COPY . .
