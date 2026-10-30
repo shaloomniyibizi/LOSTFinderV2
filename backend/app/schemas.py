@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .models import ItemStatus, ItemType, Role
+from .models import ClaimStatus, ItemStatus, ItemType, Role
 
 
 # ---------- Auth & users ----------
@@ -56,6 +56,8 @@ class ItemIn(BaseModel):
     description: str = Field(default="", max_length=2000)
     location: str = Field(default="", max_length=200)
     event_date: date
+    # FOUND items only: a question the real owner can answer (e.g. "What sticker is on the lid?")
+    verification_question: str | None = Field(default=None, max_length=300)
 
 
 class ItemUpdate(BaseModel):
@@ -66,6 +68,7 @@ class ItemUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=2000)
     location: str | None = Field(default=None, max_length=200)
     event_date: date | None = None
+    verification_question: str | None = Field(default=None, max_length=300)
     status: ItemStatus | None = None
 
 
@@ -80,6 +83,7 @@ class ItemOut(BaseModel):
     location: str
     event_date: date
     photo_hash: str | None
+    verification_question: str | None = None
     status: ItemStatus
     home_branch: str
     version: int
@@ -91,3 +95,50 @@ class ItemOut(BaseModel):
 class ItemPage(BaseModel):
     total: int
     items: list[ItemOut]
+
+
+# ---------- Matches ----------
+class MatchOut(BaseModel):
+    id: uuid.UUID
+    score: int
+    created_at: datetime
+    item: ItemOut  # the OTHER item of the pair
+
+
+# ---------- Claims ----------
+class ClaimIn(BaseModel):
+    answer: str = Field(min_length=5, max_length=2000,
+                        description="Answer to the verification question, or details only the owner knows")
+
+
+class ClaimDecision(BaseModel):
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ClaimOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    item_id: uuid.UUID
+    claimant_id: uuid.UUID
+    answer: str
+    status: ClaimStatus
+    staff_note: str | None
+    home_branch: str
+    version: int
+    created_at: datetime
+    decided_at: datetime | None
+    handed_over_at: datetime | None
+    item_title: str | None = None
+    item_question: str | None = None
+    claimant_name: str | None = None
+    claimant_email: str | None = None   # only shown to staff
+    claimant_phone: str | None = None   # only shown to staff
+
+
+# ---------- Activity feed (the bell) ----------
+class ActivityOut(BaseModel):
+    kind: str          # "match", "claim", "claim_on_my_item"
+    title: str
+    message: str
+    link: str
+    at: datetime

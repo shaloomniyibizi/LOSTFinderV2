@@ -82,6 +82,8 @@ class Item(Base):
     location: Mapped[str] = mapped_column(String(200), default="")  # where it was lost / found
     event_date: Mapped[date] = mapped_column(Date)                   # when it was lost / found
     photo_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Phase 3
+    # FOUND items: a question only the real owner can answer, e.g. "What sticker is on the lid?"
+    verification_question: Mapped[str | None] = mapped_column(String(300), nullable=True)
     status: Mapped[ItemStatus] = mapped_column(_enum(ItemStatus), default=ItemStatus.OPEN, index=True)
 
     # Distribution fields
@@ -94,17 +96,22 @@ class Item(Base):
 
 
 class Claim(Base):
-    """Used in Phase 4. Created now so the schema is complete."""
+    """Someone says a FOUND item is theirs. Created and changed ONLY at the item's home branch
+    (which locks the item so that only one claim can succeed), then copied to all branches."""
     __tablename__ = "claims"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id"), index=True)
-    claimant_id: Mapped[uuid.UUID] = mapped_column(Uuid)
-    answer: Mapped[str] = mapped_column(Text)  # answer to the verification question
-    status: Mapped[ClaimStatus] = mapped_column(_enum(ClaimStatus), default=ClaimStatus.PENDING)
-    handled_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)  # staff member
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    claimant_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
+    answer: Mapped[str] = mapped_column(Text)  # proof of ownership / answer to the verification question
+    status: Mapped[ClaimStatus] = mapped_column(_enum(ClaimStatus), default=ClaimStatus.PENDING, index=True)
+    handled_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)  # staff member who decided
+    staff_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    home_branch: Mapped[str] = mapped_column(String(5), index=True)  # = the item's home branch
+    version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    handed_over_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class OutboxEvent(Base):
@@ -126,10 +133,11 @@ class OutboxEvent(Base):
 
 
 class Match(Base):
-    """Used in Phase 4. Created now so the schema is complete."""
+    """A likely pair of LOST + FOUND items. Every branch computes matches by itself from its own
+    copy of the data; the id is derived from the two item ids, so all branches agree on it."""
     __tablename__ = "matches"
 
-    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     lost_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     found_item_id: Mapped[uuid.UUID] = mapped_column(Uuid, index=True)
     score: Mapped[int] = mapped_column(Integer)

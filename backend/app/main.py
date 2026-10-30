@@ -4,6 +4,7 @@ Run it with:  uvicorn app.main:app --port 8001
 On startup it creates the tables (if missing), registers the three branches,
 and creates the first admin account.
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,11 +12,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
-from .config import KNOWN_BRANCHES, settings
+from .config import KNOWN_BRANCHES, settings, warn_about_dev_secrets
 from .database import Base, SessionLocal, engine
 from .models import Branch, Role, User
 from . import replication
-from .routers import auth, branches, health, items, photos
+from .notifier import notifier
+from .routers import auth, branches, claims, health, items, live, photos
 from .routers import replication as replication_router
 from .security import hash_password
 
@@ -43,7 +45,9 @@ def init_db() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    warn_about_dev_secrets()
     init_db()
+    notifier.attach_loop(asyncio.get_running_loop())  # lets background threads push WebSocket messages
     replication.start()  # background threads: send our events, receive other branches' events
     yield
     replication.stop()
@@ -52,7 +56,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=f"Lost & Found — Branch {settings.branch_id} ({settings.branch_name})",
     description="Distributed Lost and Found Property Management System — one branch node.",
-    version="0.3.0 (Phase 3)",
+    version="0.4.0 (Phase 4)",
     lifespan=lifespan,
 )
 
@@ -70,4 +74,6 @@ app.include_router(auth.router)
 app.include_router(branches.router)
 app.include_router(items.router)
 app.include_router(photos.router)
+app.include_router(claims.router)
+app.include_router(live.router)
 app.include_router(replication_router.router)

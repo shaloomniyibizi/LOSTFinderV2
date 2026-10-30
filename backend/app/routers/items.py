@@ -6,12 +6,12 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from .. import storage
+from .. import matching, storage
 from ..config import settings
 from ..database import get_db
-from ..models import Item, ItemStatus, ItemType, Role, User
+from ..models import Item, ItemStatus, ItemType, Match, Role, User
 from ..replication import item_payload, record_event
-from ..schemas import ItemIn, ItemOut, ItemPage, ItemUpdate
+from ..schemas import ItemIn, ItemOut, ItemPage, ItemUpdate, MatchOut
 from ..security import get_current_user, require_roles
 
 router = APIRouter(prefix="/items", tags=["items"])
@@ -47,6 +47,8 @@ def report_item(data: ItemIn, db: Session = Depends(get_db), user: User = Depend
         description=data.description.strip(),
         location=data.location.strip(),
         event_date=data.event_date,
+        verification_question=(data.verification_question or "").strip() or None
+        if data.type == ItemType.FOUND else None,
         home_branch=settings.branch_id,
         version=1,
         reported_by=user.id,
@@ -55,6 +57,8 @@ def report_item(data: ItemIn, db: Session = Depends(get_db), user: User = Depend
     db.flush()  # fills in id and timestamps
     record_event(db, "item.created", item_payload(item))  # tell the other branches
     db.commit()
+    matching.safe_run_for_item(item.id)  # look for possible matches among all branches' items
+    db.refresh(item)
     return item
 
 
@@ -111,6 +115,19 @@ def my_items(db: Session = Depends(get_db), user: User = Depends(get_current_use
 @router.get("/{item_id}", response_model=ItemOut)
 def get_item(item_id: uuid.UUID, db: Session = Depends(get_db)):
     return _get_item_or_404(db, item_id)
+
+
+@router.get("/{item_id}/matches", response_model=list[MatchOut])
+def item_matches(item_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Possible matches for an item: LOST items get FOUND candidates and the other way round."""
+    item = _get_item_or_404(db, item_id)
+    col = Match.lost_item_id if item.type == ItemType.LOST else Match.found_item_id
+    out = []
+    for m in db.scalars(select(Match).where(col == item.id).order_by(Match.score.desc())).all():
+        other = db.get(Item, m.found_item_id if item.type == ItemType.LOST else m.lost_item_id)
+        if other is not None:
+            out.append(MatchOut(id=m.id, score=m.score, created_at=m.created_at, item=ItemOut.model_validate(other)))
+    return out
 
 
 def _check_can_edit(item: Item, user: User) -> tuple[bool, bool]:
@@ -186,6 +203,8 @@ def update_item(
     db.flush()
     record_event(db, "item.updated", item_payload(item))
     db.commit()
+    matching.safe_run_for_item(item.id)
+    db.refresh(item)
     return item
 
 

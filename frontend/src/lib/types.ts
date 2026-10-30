@@ -12,6 +12,7 @@ export interface Item {
   location: string;
   event_date: string;
   photo_hash: string | null;
+  verification_question: string | null;
   status: ItemStatus;
   home_branch: string;
   version: number;
@@ -61,4 +62,49 @@ export interface ReplicationStatus {
   outbox_pending: number;
   items_by_home_branch: Record<string, number>;
   users: number;
+  websocket_clients?: number;
+}
+
+export interface Match {
+  id: string;
+  score: number;
+  created_at: string;
+  item: Item; // the other item of the pair
+}
+
+export type ClaimStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export interface Claim {
+  id: string;
+  item_id: string;
+  claimant_id: string;
+  answer: string;
+  status: ClaimStatus;
+  staff_note: string | null;
+  home_branch: string;
+  version: number;
+  created_at: string;
+  decided_at: string | null;
+  handed_over_at: string | null;
+  item_title: string | null;
+  item_question: string | null;
+  claimant_name: string | null;
+  claimant_email: string | null;
+  claimant_phone: string | null;
+}
+
+export interface Activity {
+  kind: "match" | "claim" | "claim_on_my_item";
+  title: string;
+  message: string;
+  link: string;
+  at: string;
+}
+
+export interface LiveMessage {
+  type: "hello" | "match" | "claim";
+  title?: string;
+  message?: string;
+  link?: string;
+  score?: number;
 }

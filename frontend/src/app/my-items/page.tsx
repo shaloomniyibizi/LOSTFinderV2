@@ -3,12 +3,14 @@
 import { Inbox, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import ClaimCard from "@/components/ClaimCard";
 import ItemCard, { ItemCardSkeleton } from "@/components/ItemCard";
 import RequireLogin from "@/components/RequireLogin";
 import { Alert, EmptyState, PageHeader } from "@/components/ui";
 import { isOffline } from "@/lib/api";
 import { useApp } from "@/lib/app-context";
-import type { ItemPage, ItemType } from "@/lib/types";
+import { useNotifications } from "@/lib/notifications";
+import type { Claim, ItemPage, ItemType } from "@/lib/types";
 
 export default function MyItemsPage() {
   return (
@@ -23,6 +25,12 @@ function MyItems() {
   const [data, setData] = useState<ItemPage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<ItemType | "ALL">("ALL");
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const { liveVersion } = useNotifications();
+
+  useEffect(() => {
+    api<Claim[]>("/claims/mine").then(setClaims).catch(() => setClaims([]));
+  }, [api, liveVersion]);
 
   useEffect(() => {
     setData(null);
@@ -68,6 +76,16 @@ function MyItems() {
         <EmptyState icon={Inbox} title="No reports yet">
           When you report a lost or found item, it will appear here.
         </EmptyState>
+      )}
+
+      {claims.length > 0 && (
+        <section className="mt-12">
+          <h2 className="text-xl font-bold tracking-tight">My claims</h2>
+          <p className="mt-1 text-sm text-slate-500">Items you said are yours, and what staff decided.</p>
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            {claims.map((c) => <ClaimCard key={c.id} claim={c} showItem />)}
+          </div>
+        </section>
       )}
     </div>
   );

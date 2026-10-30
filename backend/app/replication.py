@@ -32,7 +32,8 @@ from sqlalchemy.orm import Session
 
 from .config import KNOWN_BRANCHES, settings
 from .database import SessionLocal
-from .models import Item, ItemStatus, ItemType, OutboxEvent, Role, User
+from .notifier import notifier as _notifier
+from .models import Claim, ClaimStatus, Item, ItemStatus, ItemType, OutboxEvent, Role, User
 
 log = logging.getLogger("replication")
 
@@ -57,6 +58,7 @@ def item_payload(item: Item) -> dict:
         "location": item.location,
         "event_date": item.event_date.isoformat(),
         "photo_hash": item.photo_hash,
+        "verification_question": item.verification_question,
         "status": item.status.value,
         "home_branch": item.home_branch,
         "version": item.version,
@@ -78,6 +80,39 @@ def user_payload(user: User) -> dict:
         "role": user.role.value,
         "branch_id": user.branch_id,
         "created_at": user.created_at.isoformat(),
+    }
+
+
+def claim_payload(claim: Claim) -> dict:
+    return {
+        "id": str(claim.id),
+        "item_id": str(claim.item_id),
+        "claimant_id": str(claim.claimant_id),
+        "answer": claim.answer,
+        "status": claim.status.value,
+        "handled_by": str(claim.handled_by) if claim.handled_by else None,
+        "staff_note": claim.staff_note,
+        "home_branch": claim.home_branch,
+        "version": claim.version,
+        "created_at": claim.created_at.isoformat(),
+        "decided_at": claim.decided_at.isoformat() if claim.decided_at else None,
+        "handed_over_at": claim.handed_over_at.isoformat() if claim.handed_over_at else None,
+    }
+
+
+def _claim_fields(d: dict) -> dict:
+    return {
+        "item_id": uuid.UUID(d["item_id"]),
+        "claimant_id": uuid.UUID(d["claimant_id"]),
+        "answer": d["answer"],
+        "status": ClaimStatus(d["status"]),
+        "handled_by": uuid.UUID(d["handled_by"]) if d.get("handled_by") else None,
+        "staff_note": d.get("staff_note"),
+        "home_branch": d["home_branch"],
+        "version": int(d["version"]),
+        "created_at": _dt(d.get("created_at")),
+        "decided_at": _dt(d.get("decided_at")),
+        "handed_over_at": _dt(d.get("handed_over_at")),
     }
 
 
@@ -106,6 +141,7 @@ def _item_fields(d: dict) -> dict:
         "location": d.get("location", ""),
         "event_date": date.fromisoformat(d["event_date"]),
         "photo_hash": d.get("photo_hash"),
+        "verification_question": d.get("verification_question"),
         "status": ItemStatus(d["status"]),
         "home_branch": d["home_branch"],
         "version": int(d["version"]),
@@ -141,6 +177,18 @@ def apply_event(db: Session, event_type: str, envelope: dict) -> str:
             return "ignored: not found"
         db.delete(existing)
         return "deleted"
+
+    if event_type in ("claim.created", "claim.updated"):
+        claim_id = uuid.UUID(data["id"])
+        existing = db.get(Claim, claim_id)
+        if existing is None:
+            db.add(Claim(id=claim_id, **_claim_fields(data)))
+            return "inserted"
+        if int(data["version"]) > existing.version:
+            for field, value in _claim_fields(data).items():
+                setattr(existing, field, value)
+            return "updated"
+        return "ignored: not newer"
 
     if event_type == "user.created":
         user_id = uuid.UUID(data["id"])
@@ -256,6 +304,8 @@ def _on_message(channel, method, properties, body) -> None:
         with SessionLocal() as db:
             result = apply_event(db, event_type, message)
             db.commit()
+            if result in ("inserted", "updated"):
+                after_remote_change(db, event_type, message.get("data") or {})
         if not result.startswith("ignored: own"):
             status.events_received += 1
             log.info("%s from branch %s -> %s", event_type, message.get("origin"), result)
@@ -266,6 +316,23 @@ def _on_message(channel, method, properties, body) -> None:
         log.warning("could not apply %s, will retry: %r", event_type, exc)
         time.sleep(2)
         channel.basic_nack(method.delivery_tag, requeue=True)
+
+
+def after_remote_change(db: Session, event_type: str, data: dict) -> None:
+    """React to another branch's change once it is saved here: look for new matches,
+    and notify people connected to THIS branch."""
+    from .announce import announce_claim
+    from .matching import safe_run_for_item
+
+    try:
+        if event_type in ("item.created", "item.updated"):
+            safe_run_for_item(uuid.UUID(data["id"]))
+        elif event_type in ("claim.created", "claim.updated"):
+            claim = db.get(Claim, uuid.UUID(data["id"]))
+            if claim:
+                announce_claim(db, claim, event_type)
+    except Exception:
+        log.exception("after_remote_change failed for %s", event_type)
 
 
 def _consumer_loop() -> None:
@@ -313,4 +380,5 @@ def summary(db: Session) -> dict:
         "outbox_pending": pending,
         "items_by_home_branch": by_branch,
         "users": db.scalar(select(func.count()).select_from(User)),
+        "websocket_clients": _notifier.connected_count,
     }

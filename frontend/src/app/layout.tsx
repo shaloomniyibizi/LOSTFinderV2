@@ -3,7 +3,9 @@ import type { ReactNode } from "react";
 import BranchDownBanner from "@/components/BranchDownBanner";
 import Footer from "@/components/Footer";
 import Navbar from "@/components/Navbar";
+import Toaster from "@/components/Toaster";
 import { AppProvider } from "@/lib/app-context";
+import { NotificationsProvider } from "@/lib/notifications";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -16,10 +18,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en">
       <body className="flex min-h-screen flex-col">
         <AppProvider>
-          <Navbar />
-          <BranchDownBanner />
-          <main className="flex-1">{children}</main>
-          <Footer />
+          <NotificationsProvider>
+            <Navbar />
+            <BranchDownBanner />
+            <Toaster />
+            <main className="flex-1">{children}</main>
+            <Footer />
+          </NotificationsProvider>
         </AppProvider>
       </body>
     </html>

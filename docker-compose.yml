@@ -1,19 +1,18 @@
-# THREE branches, each with its OWN PostgreSQL database, connected by RabbitMQ.
-# Photos: a folder shared by the three branches (default), or Cloudinary (free cloud) if you put
-# CLOUDINARY_URL in a ".env" file next to this one. The web app (Next.js) runs separately: see README.
+# LostFinder: three branches, each with its OWN PostgreSQL database, connected by RabbitMQ.
 #
 #   Branch A (Campus)   -> http://localhost:8001/docs   database db-a (port 5433)
 #   Branch B (Bus Park) -> http://localhost:8002/docs   database db-b (port 5434)
 #   Branch C (Airport)  -> http://localhost:8003/docs   database db-c (port 5435)
-#   RabbitMQ dashboard  -> http://localhost:15672       (login guest / guest)
+#   RabbitMQ dashboard  -> http://localhost:15672       (login: RABBITMQ_USER / RABBITMQ_PASSWORD from .env)
 #
-# Optional self-hosted photo store instead: docker compose --profile seaweedfs up
-#   (and set PHOTO_STORAGE=seaweedfs in .env)
+# PRIVATE VALUES (passwords, secrets, API keys) live in the ".env" file next to this one.
+# First time:  copy .env.example to .env and fill it in. Never share or commit .env.
 #
 # Start:            docker compose up --build
 # Stop:             docker compose down
 # Wipe all data:    docker compose down -v
 # Simulate a crash: docker compose stop branch-b   (then: docker compose start branch-b)
+# Optional self-hosted photo store: docker compose --profile seaweedfs up  (and PHOTO_STORAGE=seaweedfs in .env)
 
 x-db: &db
   image: postgres:16
@@ -24,26 +23,35 @@ x-db: &db
     retries: 30
     start_period: 120s   # first-time setup can be slow on Windows; failures here don't count
 
+x-db-env: &db-env
+  POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example to .env first)}
+
 x-branch-env: &branch-env
-  JWT_SECRET: dev-secret-change-me-0123456789abcdef   # must be the SAME on all branches
-  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-  # Photo storage. Leave CLOUDINARY_URL empty to use the shared "photos-data" folder.
+  # --- secrets, all from .env ---
+  JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (copy .env.example to .env first)}
+  ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL in .env}
+  ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:?Set RABBITMQ_USER in .env}:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/
+  CLOUDINARY_URL: ${CLOUDINARY_URL:-}                   # empty = photos in the shared folder
+  # --- not secret ---
   PHOTO_STORAGE: ${PHOTO_STORAGE:-}                     # local | cloudinary | seaweedfs (empty = automatic)
-  CLOUDINARY_URL: ${CLOUDINARY_URL:-}                   # read from the .env file
   SEAWEEDFS_FILER_URL: http://seaweedfs:8888            # only used with PHOTO_STORAGE=seaweedfs
-  PHOTO_DIR: /data/photos                               # the shared folder
-  ADMIN_EMAIL: admin@lostfound.local
-  ADMIN_PASSWORD: admin123
+  PHOTO_DIR: /data/photos                               # the folder shared by the three branches
+  PEER_URLS: A=http://branch-a:8000,B=http://branch-b:8000,C=http://branch-c:8000   # to forward claims
+  MATCH_THRESHOLD: ${MATCH_THRESHOLD:-60}
 
 services:
   rabbitmq:
     image: rabbitmq:3-management
     hostname: rabbitmq            # fixed name so stored messages survive restarts
     environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
       # Give RabbitMQ its internal secret ("Erlang cookie") directly, so it never has to read
       # /var/lib/rabbitmq/.erlang.cookie. On some Windows setups that file can't be read
       # ("Error when reading .erlang.cookie: eacces") and RabbitMQ refuses to start.
-      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-setcookie lostfinder-secret-cookie"
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-setcookie ${RABBITMQ_ERLANG_COOKIE:?Set RABBITMQ_ERLANG_COOKIE in .env}"
     # No volume and no health check on purpose (both need that cookie file).
     # Queued messages still survive "docker compose stop/start"; only "down" clears them.
     ports:
@@ -58,27 +66,27 @@ services:
     command: ["server", "-dir=/data", "-filer", "-ip=seaweedfs", "-ip.bind=0.0.0.0",
               "-master.volumeSizeLimitMB=100", "-volume.max=20"]
     ports:
-      - "8888:8888"   # filer: browse photos at http://localhost:8888/lostfound/photos/
-      - "9333:9333"   # master status page
+      - "8888:8888"
+      - "9333:9333"
     volumes:
       - seaweedfs-data:/data
 
   # ---------- databases: one per branch ----------
   db-a:
     <<: *db
-    environment: { POSTGRES_DB: branch_a, POSTGRES_USER: LostFinder, POSTGRES_PASSWORD: LostFinder_2026 }
+    environment: { <<: *db-env, POSTGRES_DB: branch_a }
     ports: ["5433:5432"]
     volumes: [db-a-data:/var/lib/postgresql/data]
 
   db-b:
     <<: *db
-    environment: { POSTGRES_DB: branch_b, POSTGRES_USER: LostFinder, POSTGRES_PASSWORD: LostFinder_2026 }
+    environment: { <<: *db-env, POSTGRES_DB: branch_b }
     ports: ["5434:5432"]
     volumes: [db-b-data:/var/lib/postgresql/data]
 
   db-c:
     <<: *db
-    environment: { POSTGRES_DB: branch_c, POSTGRES_USER: LostFinder, POSTGRES_PASSWORD: LostFinder_2026 }
+    environment: { <<: *db-env, POSTGRES_DB: branch_c }
     ports: ["5435:5432"]
     volumes: [db-c-data:/var/lib/postgresql/data]
 
@@ -89,9 +97,9 @@ services:
       <<: *branch-env
       BRANCH_ID: A
       BRANCH_NAME: Campus
-      DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-a:5432/branch_a
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db-a:5432/branch_a
     ports: ["8001:8000"]
-    volumes: [photos-data:/data/photos]   # same photo folder for all branches
+    volumes: [photos-data:/data/photos]
     depends_on:
       db-a: { condition: service_healthy }
       rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
@@ -102,12 +110,12 @@ services:
       <<: *branch-env
       BRANCH_ID: B
       BRANCH_NAME: Bus Park
-      DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-b:5432/branch_b
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db-b:5432/branch_b
     ports: ["8002:8000"]
-    volumes: [photos-data:/data/photos]   # same photo folder for all branches
+    volumes: [photos-data:/data/photos]
     depends_on:
       db-b: { condition: service_healthy }
-      rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
+      rabbitmq: { condition: service_started }
 
   branch-c:
     build: ./backend
@@ -115,12 +123,12 @@ services:
       <<: *branch-env
       BRANCH_ID: C
       BRANCH_NAME: Airport
-      DATABASE_URL: postgresql+psycopg://LostFinder:LostFinder_2026@db-c:5432/branch_c
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db-c:5432/branch_c
     ports: ["8003:8000"]
-    volumes: [photos-data:/data/photos]   # same photo folder for all branches
+    volumes: [photos-data:/data/photos]
     depends_on:
       db-c: { condition: service_healthy }
-      rabbitmq: { condition: service_started }   # branches retry until RabbitMQ is ready
+      rabbitmq: { condition: service_started }
 
 volumes:
   photos-data:
