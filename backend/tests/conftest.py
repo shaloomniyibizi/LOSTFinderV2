@@ -4,6 +4,7 @@ import tempfile
 
 _db_file = os.path.join(tempfile.mkdtemp(), "test.db")
 os.environ["DATABASE_URL"] = f"sqlite:///{_db_file}"
+os.environ["PHOTO_DIR"] = os.path.join(os.path.dirname(_db_file), "photos")
 os.environ["BRANCH_ID"] = "A"
 os.environ["BRANCH_NAME"] = "Campus"
 os.environ["ADMIN_EMAIL"] = "admin@test.local"

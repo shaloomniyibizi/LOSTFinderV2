@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from .. import storage
 from ..config import settings
 from ..database import get_db
 
@@ -23,5 +24,6 @@ def health(db: Session = Depends(get_db)):
         "name": settings.branch_name,
         "status": "ok" if database == "ok" else "degraded",
         "database": database,
+        "photo_storage": storage.store.name,  # "local folder", "cloudinary" or "seaweedfs"
         "time": datetime.now(timezone.utc).isoformat(),
     }
