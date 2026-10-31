@@ -1,92 +1,197 @@
-"""Fill the system with realistic demo data across the three branches.
+"""Fill the system with realistic demo data, with a picture for every item.
 
-Start the system first (docker compose up), then:
-    pip install httpx
+Start the whole system first (docker compose up), then in the project folder:
+    pip install -r scripts/requirements.txt
     python scripts/seed_demo.py
 
-It creates two demo users and about a dozen lost/found items at different branches.
-Running it twice is safe: existing accounts are reused, but items are added again.
+What it creates (from scripts/demo_data.json and scripts/demo_photos/):
+  - 8 member accounts (password demo1234), e.g. aline@demo.rw, eric@demo.rw, daniel@demo.rw
+  - 3 staff accounts, one per branch: grace@staff.rw (Campus), olivier@staff.rw (Bus Park), ange@staff.rw (Airport)
+  - 38 lost and found reports spread over the three branches, each with a picture
+  - matching pairs, so "My matches" is filled in
+  - 10 claims in every state: waiting for review, approved, handed over and rejected
+  - report dates spread over the last 18 days, so the dashboard charts show a trend
+
+The staff accounts are created with the admin login from your .env (ADMIN_EMAIL / ADMIN_PASSWORD).
+Running it a second time does nothing unless you add --force.
+
+Options:
+    --force          add the demo items again even if they are already there
+    --no-dates       don't spread the report dates (skips the docker step)
+    --no-photos      don't upload pictures
 """
+import argparse
+import json
+import subprocess
 import sys
+import time
 from datetime import date, timedelta
+from pathlib import Path
 
 import httpx
 
-BRANCHES = {"A": "http://localhost:8001", "B": "http://localhost:8002", "C": "http://localhost:8003"}
-PASSWORD = "demo1234"
-USERS = [
-    ("Aline Uwase", "aline@demo.rw", "+250 788 000 001"),
-    ("Eric Mugisha", "eric@demo.rw", "+250 788 000 002"),
-]
+from _common import BRANCHES, NAMES, ROOT, load_env
 
-d = lambda days: (date.today() - timedelta(days=days)).isoformat()  # noqa: E731
-
-# (branch, user index, item)
-ITEMS = [
-    ("A", 0, dict(type="FOUND", category="laptop", colour="black", title="Black HP EliteBook laptop",
-                  description="Left on a desk in the library. Has a university sticker on the lid.",
-                  location="Main library, 2nd floor", event_date=d(1))),
-    ("A", 1, dict(type="LOST", category="id card", colour="blue", title="Student ID card",
-                  description="Blue student card on a black lanyard.", location="Lecture hall LH-3", event_date=d(2))),
-    ("A", 0, dict(type="FOUND", category="keys", colour="silver", title="Bunch of 3 keys with red keyring",
-                  description="Found near the cafeteria entrance.", location="Campus cafeteria", event_date=d(0))),
-    ("A", 1, dict(type="LOST", category="headphones", colour="white", title="White wireless earbuds",
-                  description="In a small white charging case.", location="Sports ground", event_date=d(4))),
-    ("B", 1, dict(type="FOUND", category="phone", colour="blue", title="Blue Samsung phone, cracked screen",
-                  description="Found under a seat on the Kigali–Musanze bus.", location="Nyabugogo bus park, bay 4", event_date=d(1))),
-    ("B", 0, dict(type="LOST", category="bag", colour="grey", title="Grey backpack with laptop sleeve",
-                  description="Contains notebooks and a water bottle.", location="Nyabugogo bus park", event_date=d(3))),
-    ("B", 1, dict(type="FOUND", category="wallet", colour="brown", title="Brown leather wallet",
-                  description="No cash inside. Owner can describe the cards.", location="Ticket office", event_date=d(2))),
-    ("B", 0, dict(type="LOST", category="umbrella", colour="black", title="Black folding umbrella",
-                  description="", location="Bus to Huye", event_date=d(6))),
-    ("C", 0, dict(type="FOUND", category="documents", colour="green", title="Green folder with documents",
-                  description="Found at the check-in area.", location="Departures hall", event_date=d(1))),
-    ("C", 1, dict(type="LOST", category="watch", colour="gold", title="Gold wristwatch",
-                  description="Engraving on the back. Sentimental value.", location="Arrivals, baggage belt 2", event_date=d(5))),
-    ("C", 0, dict(type="FOUND", category="glasses", colour="black", title="Black prescription glasses",
-                  description="In a hard black case.", location="Gate 3 waiting area", event_date=d(0))),
-    ("C", 1, dict(type="LOST", category="tablet", colour="silver", title="Silver iPad in a blue cover",
-                  description="", location="Security check", event_date=d(2))),
-]
+HERE = Path(__file__).resolve().parent
+DATA = json.loads((HERE / "demo_data.json").read_text(encoding="utf-8"))
+PHOTOS = HERE / "demo_photos"
+client = httpx.Client(timeout=30)
 
 
-def main():
-    for bid, url in BRANCHES.items():
-        try:
-            httpx.get(url + "/health", timeout=3).raise_for_status()
-        except httpx.HTTPError:
-            print(f"Branch {bid} at {url} is not reachable. Run: docker compose up")
-            sys.exit(1)
+def fail(msg: str):
+    print(f"\n{msg}")
+    sys.exit(1)
 
-    tokens = {}
-    for i, (name, email, phone) in enumerate(USERS):
-        r = httpx.post(BRANCHES["A"] + "/auth/register",
-                       json={"full_name": name, "email": email, "phone": phone, "password": PASSWORD})
-        if r.status_code not in (201, 409):
-            r.raise_for_status()
-        print(("Created" if r.status_code == 201 else "Reusing") + f" user {email} / {PASSWORD}")
 
-    import time
-    for bid, user_index, item in ITEMS:
-        url = BRANCHES[bid]
-        key = (bid, user_index)
-        if key not in tokens:
-            email = USERS[user_index][1]
-            for _ in range(20):  # the account may still be on its way to this branch
-                r = httpx.post(url + "/auth/login", data={"username": email, "password": PASSWORD})
+class Logins:
+    """Caches one token per (email, branch). Waits for accounts that are still being copied to a branch."""
+
+    def __init__(self):
+        self.tokens: dict[tuple[str, str], dict] = {}
+
+    def headers(self, email: str, password: str, branch: str) -> dict:
+        key = (email, branch)
+        if key not in self.tokens:
+            for _ in range(40):
+                r = client.post(BRANCHES[branch] + "/auth/login", data={"username": email, "password": password})
                 if r.status_code == 200:
-                    tokens[key] = r.json()["access_token"]
+                    self.tokens[key] = {"Authorization": "Bearer " + r.json()["access_token"]}
                     break
                 time.sleep(0.5)
             else:
-                print(f"Could not log in {email} at branch {bid}. Is RabbitMQ running?")
-                sys.exit(1)
-        r = httpx.post(url + "/items", json=item, headers={"Authorization": f"Bearer {tokens[key]}"})
-        r.raise_for_status()
-        print(f"  Branch {bid}: {item['type']:5} {item['title']}")
+                fail(f"Could not log in as {email} at {NAMES[branch]} (HTTP {r.status_code}). Is RabbitMQ running?")
+        return self.tokens[key]
 
-    print("\nDone. Open http://localhost:3000 and log in as aline@demo.rw or eric@demo.rw (password demo1234).")
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--no-dates", action="store_true")
+    ap.add_argument("--no-photos", action="store_true")
+    args = ap.parse_args()
+
+    for bid, url in BRANCHES.items():
+        try:
+            client.get(url + "/health", timeout=3).raise_for_status()
+        except httpx.HTTPError:
+            fail(f"{NAMES[bid]} (branch {bid}) at {url} is not reachable. Start the system first: docker compose up")
+
+    env = load_env()
+    pw = DATA["password"]
+    logins = Logins()
+    marker = DATA["items"][-1]["title"]
+    if not args.force and client.get(BRANCHES["A"] + "/items", params={"q": marker}).json()["total"] > 0:
+        print("The demo data is already there. Log in as aline@demo.rw / demo1234.")
+        print("(To add it again anyway: python scripts/seed_demo.py --force)")
+        return
+
+    # ---- accounts
+    print("Accounts")
+    for u in DATA["users"]:
+        r = client.post(BRANCHES["A"] + "/auth/register",
+                        json={"full_name": u["name"], "email": u["email"], "phone": u["phone"], "password": pw})
+        if r.status_code not in (201, 409):
+            fail(f"Could not create {u['email']}: HTTP {r.status_code} {r.text}")
+        print(f"  {'created' if r.status_code == 201 else 'exists '}  {u['email']}")
+    admin_email, admin_pw = env.get("ADMIN_EMAIL", "admin@lostfound.local"), env.get("ADMIN_PASSWORD", "")
+    admin = logins.headers(admin_email, admin_pw, "A") if admin_pw else None
+    if admin is None:
+        fail("ADMIN_PASSWORD is missing from .env: it is needed to create the staff accounts.")
+    for s in DATA["staff"]:
+        r = client.post(BRANCHES["A"] + "/users", headers=admin, json={
+            "full_name": s["name"], "email": s["email"], "password": pw, "role": "staff", "branch_id": s["branch"]})
+        if r.status_code not in (201, 409):
+            fail(f"Could not create staff {s['email']}: HTTP {r.status_code} {r.text}")
+        print(f"  {'created' if r.status_code == 201 else 'exists '}  {s['email']} (staff, {NAMES[s['branch']]})")
+    emails = {u["key"]: u["email"] for u in DATA["users"] + DATA["staff"]}
+
+    # ---- reports with pictures
+    print(f"\nReports ({len(DATA['items'])})")
+    ids: dict[str, str] = {}
+    for it in DATA["items"]:
+        h = logins.headers(emails[it["user"]], pw, it["branch"])
+        body = {k: it[k] for k in ("type", "category", "colour", "title", "description", "location")}
+        body["event_date"] = (date.today() - timedelta(days=it["days"])).isoformat()
+        if it.get("question"):
+            body["verification_question"] = it["question"]
+        r = client.post(BRANCHES[it["branch"]] + "/items", headers=h, json=body)
+        if r.status_code != 201:
+            fail(f"Could not save \"{it['title']}\": HTTP {r.status_code} {r.text}")
+        ids[it["key"]] = r.json()["id"]
+        photo = PHOTOS / f"{it['key']}.jpg"
+        note = ""
+        if not args.no_photos and photo.exists():
+            with photo.open("rb") as f:
+                p = client.post(f"{BRANCHES[it['branch']]}/items/{ids[it['key']]}/photo", headers=h,
+                                files={"file": (photo.name, f, "image/jpeg")})
+            note = " + picture" if p.status_code == 200 else f" (picture failed: HTTP {p.status_code})"
+        print(f"  {NAMES[it['branch']]:9} {it['type']:5} {it['title']}{note}")
+
+    # wait until every branch has a copy (claims are checked against the item's copy)
+    print("\nWaiting for every branch to receive a copy…", end="", flush=True)
+    for _ in range(60):
+        counts = [client.get(u + "/items", params={"limit": 1}).json()["total"] for u in BRANCHES.values()]
+        if len(set(counts)) == 1:
+            break
+        time.sleep(0.5)
+    print(" done")
+
+    # ---- claims and staff decisions
+    print(f"\nClaims ({len(DATA['claims'])})")
+    by_key = {it["key"]: it for it in DATA["items"]}
+    for c in DATA["claims"]:
+        it = by_key[c["item"]]
+        home = it["branch"]
+        h = logins.headers(emails[c["by"]], pw, home)
+        r = client.post(f"{BRANCHES[home]}/items/{ids[c['item']]}/claims", headers=h, json={"answer": c["answer"]})
+        if r.status_code not in (201, 202):
+            print(f"  could not claim {it['title']}: HTTP {r.status_code} {r.text}")
+            continue
+        claim_id = r.json()["id"]
+        note = {"note": c.get("note")}
+        steps = {"approved": ["approve"], "handed_over": ["approve", "handover"], "rejected": ["reject"]}.get(c["outcome"], [])
+        for step in steps:
+            client.post(f"{BRANCHES[home]}/claims/{claim_id}/{step}", headers=admin, json=note).raise_for_status()
+        # the owner's own lost report is closed too once they have their item back
+        lost_key = c["item"].replace("-found", "-lost")
+        if c["outcome"] == "handed_over" and lost_key in ids:
+            lh = by_key[lost_key]["branch"]
+            client.patch(f"{BRANCHES[lh]}/items/{ids[lost_key]}", headers=logins.headers(admin_email, admin_pw, lh),
+                         json={"status": "RETURNED"})
+        print(f"  {c['outcome']:11} {it['title']} (claimed by {emails[c['by']]})")
+
+    if not args.no_dates:
+        spread_dates(env, ids)
+
+    print("\nDone. Open http://localhost:3000 and sign in, for example:")
+    print("  member:  aline@demo.rw / demo1234   (matches, a claim waiting for review)")
+    print("  staff:   ange@staff.rw / demo1234   (Airport review queue)")
+    print(f"  admin:   {admin_email} / (your ADMIN_PASSWORD)")
+
+
+def spread_dates(env: dict, ids: dict[str, str]):
+    """Set each report's creation time to its event date, in all three databases, so the
+    '14 days' chart shows a trend instead of everything today. Uses the same deterministic
+    values in every database, so the copies stay identical."""
+    print("\nSpreading report dates over the last days…")
+    id_list = ",".join(f"'{i}'" for i in ids.values())
+    sql = (
+        f"UPDATE items SET created_at = event_date::timestamp + interval '8 hours' "
+        f"+ (abs(hashtext(id::text)) % 600) * interval '1 minute' WHERE id IN ({id_list}) "
+        f"AND event_date < current_date; "
+        f"UPDATE claims SET created_at = created_at - interval '2 days 3 hours', "
+        f"decided_at = decided_at - interval '1 day 2 hours', handed_over_at = handed_over_at - interval '20 hours' "
+        f"WHERE item_id IN ({id_list}) AND created_at > now() - interval '1 hour';"
+    )
+    user = env.get("POSTGRES_USER", "postgres")
+    for b in "abc":
+        cmd = ["docker", "compose", "exec", "-T", f"db-{b}", "psql", "-q", "-U", user, "-d", f"branch_{b}", "-c", sql]
+        res = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f"  skipped ({(res.stderr or res.stdout).strip()[:120]})")
+            print("  The data is fine; the charts will just show every report on today's date.")
+            return
+    print("  done")
 
 
 if __name__ == "__main__":

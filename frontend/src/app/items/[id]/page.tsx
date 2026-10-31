@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  ArrowLeft, ArrowLeftRight, CalendarDays, Camera, Clock, Copy, GitBranch, ImageOff, MapPin, Pencil, Tag,
+  ArrowLeftRight, CalendarDays, Camera, Clock, Copy, GitBranch, ImageOff, MapPin, Pencil, Tag,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
@@ -11,7 +11,7 @@ import CategoryIcon from "@/components/CategoryIcon";
 import ClaimPanel from "@/components/ClaimPanel";
 import ItemMatches from "@/components/ItemMatches";
 import PhotoPicker from "@/components/PhotoPicker";
-import { Alert, EmptyState, Spinner } from "@/components/ui";
+import { Alert, EmptyState, PageTitle, Spinner } from "@/components/ui";
 import { ApiError, isOffline, photoUrl } from "@/lib/api";
 import { canEdit, isStaffFor, useApp } from "@/lib/app-context";
 import { branchName, CATEGORIES, COLOURS } from "@/lib/branches";
@@ -76,18 +76,18 @@ function ItemView() {
 
   if (notFound) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6">
+      <div className="mx-auto max-w-3xl py-10">
         <EmptyState icon={ImageOff} title="Item not found">
-          It may have been removed. <Link href="/search" className="font-semibold text-indigo-600">Browse all items</Link>
+          It may have been removed. <Link href="/search" className="font-semibold text-blue-600 dark:text-blue-400">Browse all items</Link>
         </EmptyState>
       </div>
     );
   }
   if (error) {
-    return <div className="mx-auto max-w-3xl px-4 py-16 sm:px-6"><Alert>{error}</Alert></div>;
+    return <div className="mx-auto max-w-3xl py-10"><Alert>{error}</Alert></div>;
   }
   if (!item) {
-    return <div className="flex justify-center py-32 text-slate-400"><Spinner className="h-6 w-6" /></div>;
+    return <div className="flex justify-center py-32 text-ink-3"><Spinner className="h-6 w-6" /></div>;
   }
 
   const src = photoUrl(branch.url, item.photo_hash);
@@ -95,10 +95,11 @@ function ItemView() {
   const editable = canEdit(user, item);
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-      <Link href="/search" className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
-        <ArrowLeft className="h-4 w-4" /> Back to all items
-      </Link>
+    <div>
+      <PageTitle crumbs={[
+        { label: item.type === "LOST" ? "Lost items" : "Found items", href: item.type === "LOST" ? "/lost" : "/found" },
+        { label: item.title.length > 32 ? item.title.slice(0, 30) + "…" : item.title },
+      ]} />
 
       {notice === "created" && (
         <div className="mt-4">
@@ -114,15 +115,15 @@ function ItemView() {
         </div>
       )}
 
-      <div className="mt-6 grid gap-8 lg:grid-cols-[1.1fr_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
         {/* Photo */}
         <div className="card self-start overflow-hidden">
-          <div className="flex aspect-[4/3] items-center justify-center bg-slate-100">
+          <div className="flex aspect-[4/3] items-center justify-center bg-panel-2">
             {src && !broken ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={src} alt={item.title} onError={() => setBroken(true)} className="h-full w-full object-contain" />
             ) : (
-              <div className="flex flex-col items-center gap-3 text-slate-400">
+              <div className="flex flex-col items-center gap-3 text-ink-3">
                 <CategoryIcon category={item.category} className="h-16 w-16" />
                 <span className="text-sm">{broken ? "The photo can't be loaded right now" : "No photo yet"}</span>
               </div>
@@ -138,7 +139,7 @@ function ItemView() {
               <StatusBadge status={item.status} />
             </div>
             <h1 className="mt-3 text-3xl font-bold tracking-tight">{item.title}</h1>
-            <p className="mt-1 text-sm text-slate-500">Reported {timeAgo(item.created_at)}</p>
+            <p className="mt-1 text-sm text-ink-2">Reported {timeAgo(item.created_at)}</p>
           </div>
 
           <dl className="card grid grid-cols-2 gap-x-6 gap-y-4 p-5 text-sm">
@@ -152,14 +153,14 @@ function ItemView() {
 
           {item.description && (
             <div>
-              <h2 className="text-sm font-semibold text-slate-900">Description</h2>
-              <p className="mt-1.5 whitespace-pre-line text-slate-600">{item.description}</p>
+              <h2 className="text-sm font-semibold text-ink">Description</h2>
+              <p className="mt-1.5 whitespace-pre-line text-ink-2">{item.description}</p>
             </div>
           )}
 
           {/* Replication info: which copy you're looking at */}
-          <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            <Copy className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+          <div className="flex items-start gap-3 rounded-lg border border-line bg-panel-2 p-4 text-sm text-ink-2">
+            <Copy className="mt-0.5 h-4 w-4 shrink-0 text-ink-3" />
             <p>
               {atHome ? (
                 <>You are viewing the <b>original</b> at its home branch, {branch.name}. Version {item.version}.</>
@@ -170,7 +171,7 @@ function ItemView() {
           </div>
 
           {editable && !atHome && (
-            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
+            <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 p-4 text-sm text-blue-900 dark:text-blue-300">
               <p>
                 Changes to this item are made at its home branch, <b>{branchName(item.home_branch)}</b>, which keeps every copy consistent.
               </p>
@@ -209,10 +210,10 @@ function ItemView() {
 function Meta({ Icon, label, value }: { Icon: typeof Tag; label: string; value: ReactNode }) {
   return (
     <div>
-      <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
+      <dt className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-ink-3">
         <Icon className="h-3.5 w-3.5" /> {label}
       </dt>
-      <dd className="mt-1 font-medium text-slate-800">{value}</dd>
+      <dd className="mt-1 font-medium text-ink">{value}</dd>
     </div>
   );
 }
@@ -237,7 +238,7 @@ function StatusControl({ item, onSaved }: { item: Item; onSaved: (it: Item) => v
 
   return (
     <div className="card p-4">
-      <p className="text-sm font-semibold text-slate-900">Staff: update status</p>
+      <p className="text-sm font-semibold text-ink">Staff: update status</p>
       <div className="mt-3 flex gap-2">
         <select className="input" value={status} onChange={(e) => setStatus(e.target.value as ItemStatus)}>
           {(["OPEN", "MATCHED", "CLAIMED", "RETURNED"] as const).map((s) => (
@@ -248,7 +249,7 @@ function StatusControl({ item, onSaved }: { item: Item; onSaved: (it: Item) => v
           {busy ? <Spinner className="h-4 w-4" /> : "Save"}
         </button>
       </div>
-      {error && <p className="mt-2 text-sm text-rose-600">{error}</p>}
+      {error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p>}
     </div>
   );
 }

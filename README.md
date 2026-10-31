@@ -24,7 +24,7 @@ Everything runs on your own computer and nothing costs money. The only optional 
 
 ## Quick start
 
-You need **Docker Desktop** (running) and **Node.js 20 or newer**.
+You need **Docker Desktop** (running). Python is only needed for the demo-data and test scripts; Node.js only if you want to change the web app (see *Working on the web app* below).
 
 **1. Create your private settings file (first time only)**
 ```powershell
@@ -35,28 +35,32 @@ notepad .env                  # replace every "change-me" value
 Use only letters, digits, `-` and `_` in the passwords. To make a strong random value:
 `python -c "import secrets; print(secrets.token_urlsafe(32))"`
 
-**2. Start the back end**
+**2. Start everything** (databases, RabbitMQ, the three branches and the web app)
 ```powershell
 docker compose down -v        # only when upgrading from an earlier phase: the database tables changed
 docker compose up --build
 ```
-Wait until each branch shows `consumer listening on branch-A` (and `branch-B`, `branch-C`). A few `retrying in 3s` warnings at the start are normal while RabbitMQ boots.
+The first build takes a few minutes (it downloads Python and Node.js packages). Wait until each branch shows `consumer listening on branch-A` (and `branch-B`, `branch-C`). A few `retrying in 3s` warnings at the start are normal while RabbitMQ boots.
 
-**3. Start the web app** (second terminal)
+**3. Open the web app:** **http://localhost:3000**
+
+**4. Demo data with pictures (optional, second terminal)**
 ```powershell
-cd frontend
-npm install          # first time only
-npm run dev
+pip install -r scripts/requirements.txt
+python scripts/seed_demo.py
 ```
-Open **http://localhost:3000**.
+It creates 38 lost and found reports with a picture each, 8 members, a staff account for each branch, possible matches, and 10 claims in every state (waiting, approved, handed over, rejected). It also spreads the report dates over the last 18 days so the dashboard charts show a trend.
 
-**4. Demo data (optional, third terminal)**
-```powershell
-pip install httpx
-python scripts/seed_demo.py      # 12 items + logins aline@demo.rw / eric@demo.rw, password demo1234
-```
+| Login (password `demo1234`) | Try |
+|---|---|
+| `aline@demo.rw` | Member: matches, a claim waiting for review |
+| `eric@demo.rw`, `daniel@demo.rw`, `sandrine@demo.rw`… | Other members (see `scripts/demo_data.json`) |
+| `grace@staff.rw` / `olivier@staff.rw` / `ange@staff.rw` | Staff at Campus / Bus Park / Airport |
+| `ADMIN_EMAIL` from `.env` | Admin: all branches |
 
-**5. Make a staff account** (needed to approve claims)
+Running it again does nothing (add `--force` to add everything again). The items, people and claims are in `scripts/demo_data.json` and the pictures in `scripts/demo_photos/`, so you can edit them. The pictures are original illustrations drawn for this project (from the ISC-licensed Lucide icon set), so they are free to use in your report.
+
+**5. Make your own staff account** (optional: the demo data already has one per branch)
 Open http://localhost:8001/docs → **Authorize** → log in with `ADMIN_EMAIL` / `ADMIN_PASSWORD` from your `.env` → `POST /users`:
 ```json
 {"full_name": "Grace Staff", "email": "grace@staff.rw", "password": "secret123", "role": "staff", "branch_id": "B"}
@@ -65,9 +69,23 @@ Grace can now use the **Staff desk** for the Bus Park branch. The account is cop
 
 | What | Address |
 |---|---|
-| Web app | http://localhost:3000 |
+| Web app (container `web`) | http://localhost:3000 |
 | Branch APIs | http://localhost:8001/docs, :8002/docs, :8003/docs |
 | RabbitMQ dashboard | http://localhost:15672 (login = `RABBITMQ_USER` / `RABBITMQ_PASSWORD` from `.env`) |
+
+---
+
+### Working on the web app
+The `web` container runs a production build, so changes to `frontend/src` show up only after `docker compose up --build web`. While you are changing the web app, use the development server instead, which reloads instantly. You need Node.js 20 or newer:
+```powershell
+docker compose stop web       # frees port 3000
+cd frontend
+npm install                   # first time only
+npm run dev
+```
+When you're done: `docker compose start web` (or `up --build web` to include your changes).
+
+The browser talks to the branches directly through `localhost:8001`, `:8002` and `:8003`. If you change those ports, set `WEB_BRANCH_A_URL`, `WEB_BRANCH_B_URL` and `WEB_BRANCH_C_URL` in `.env` and rebuild the web app (`docker compose up --build web`).
 
 ---
 
@@ -89,6 +107,39 @@ Nothing secret is written in the code or in `docker-compose.yml`. Docker Compose
 - `.env` is listed in `.gitignore`, so it never goes to GitHub. Share `.env.example`, never `.env`.
 - Running a branch without Docker? Copy `backend/.env.example` to `backend/.env`; the branch reads it at start-up.
 - The branches log a warning if they start with the development default secret or admin password.
+
+---
+
+## New user interface (dashboard design)
+
+The web app now uses a dashboard layout: a **sidebar** on the left, a top bar, and **charts**. It has a **dark theme** by default and a light theme, chosen with the moon/sun button in the top bar.
+
+| Page | What it shows |
+|---|---|
+| **Dashboard** `/dashboard` | *Members:* their open reports, matches, claims, recent notifications, reports per day (line chart), their lost reports by status, reports by category. *Staff and admin:* claims to review, awaiting handover, items in custody, returns, the claim queue, recent claim activity, claims by status, reports by category, reports by home branch, and the health of the branch network. |
+| **Lost items** `/lost`, **Found items** `/found` | Banner, search and filters (category, branch), status tabs with counts, item cards |
+| **Report lost item** / **Turn in found item** `/report` | Form in sections, with tips and "what happens next" |
+| **My matches** `/matches` | Each match with its score ring, both items side by side, and **why it matched** (+40 same category, +20 same colour…) |
+| **My claims** `/claims` | Progress steps *Submitted → In review → Approved → Collected*, ready-to-collect notice, claims on items you found, claims queued for an offline branch |
+| **My reports**, **Notifications**, **My profile** | Your reports; a timeline of notifications; your account, connected branch and theme |
+| **Security desk** `/staff` | Review queue, Awaiting handover, Closed |
+| **Network status** `/status` | Each branch's health and a chart comparing each branch's copy of the data |
+| Home page `/` (visitors) | Public landing page with a live network diagram, search, figures and the latest reports |
+| Sign in / Register | A pop-up window with two tabs, available from every page |
+
+**Visitors** (not signed in) see a simple top bar with *Lost items, Found items, How it works, Network status* and **no sidebar**. **Sign in** and **Register** open as a pop-up window over the current page, so after signing in you stay where you were (from the home page you go to your dashboard). The old links `/login` and `/register` still work: they open the same window, and `/login?next=/matches` goes to *My matches* after signing in.
+
+The sidebar's badges (matches, review queue…) and the "Branch network" dots at the bottom update live. On a phone, the sidebar becomes a slide-in menu.
+
+New back-end endpoints for the charts. Every branch has a full copy of the data, so **any branch can answer for the whole network**:
+
+| Method | Path | Who | What |
+|---|---|---|---|
+| GET | `/stats/overview` | anyone | Reports per day (14 days), by category, status and home branch; claims by stage; totals and return rate |
+| GET | `/me/overview` | logged in | Your own figures (open reports, matches, claims…) |
+| GET | `/me/matches` | logged in | Matches for all your items, with the reasons behind each score |
+
+Screenshots: `docs/screenshots/16-…` to `26-…`.
 
 ---
 
@@ -129,7 +180,7 @@ The scripts read `JWT_SECRET` from your `.env`. The failure test stops and start
 
 | Result (development machine) | |
 |---|---|
-| Automated tests | 86 passed |
+| Automated tests | 89 passed |
 | Failure test | 16 of 16 checks passed. Crash detected in 11.6 s; queued claim delivered 4.6 s after restart; consistent again 5.1 s after restart; wiped database rebuilt in 1.4 s |
 | Replication lag | median 9.1 ms, p95 18.1 ms, 0 lost |
 | Load (60 users) | searches: avg 46 ms over 3 branches vs 151 ms on 1 branch, 0 failures |
@@ -236,7 +287,7 @@ Pairs scoring **60 or more** become *possible matches*, shown on both items' pag
 ```
 lostfinder/
 ├── .env.example              # copy to .env: all private settings
-├── docker-compose.yml        # 3 databases + 3 branches + RabbitMQ (+ optional SeaweedFS)
+├── docker-compose.yml        # 3 databases + 3 branches + RabbitMQ + web app (+ optional SeaweedFS)
 ├── docs/
 │   ├── TESTING.md            # test strategy and results (Phase 5)
 │   ├── results/              # failure-test report, replication lag and load-test CSVs
@@ -261,12 +312,13 @@ lostfinder/
 │   │   ├── notifier.py       # WebSocket connections and pushing messages
 │   │   ├── announce.py       # notification texts
 │   │   ├── storage.py        # photos: shared folder, Cloudinary, SeaweedFS
-│   │   └── routers/          # health, auth, branches, items, photos, claims, live (ws + activity), replication
-│   └── tests/                # 86 automated tests
-└── frontend/                 # Next.js + Tailwind web app
+│   │   └── routers/          # health, auth, branches, items, photos, claims, live (ws + activity), replication, stats
+│   └── tests/                # 89 automated tests
+└── frontend/                 # Next.js + Tailwind web app (Dockerfile builds the `web` container)
     └── src/
-        ├── app/              # /, search, report, items/[id], my-items, staff, status, login, register
-        ├── components/       # Navbar, NotificationBell, Toaster, ClaimPanel, ClaimCard, ItemMatches…
+        ├── app/              # /, dashboard, lost, found, search, report, items/[id], matches, claims, my-items,
+        │                     # notifications, profile, staff, status, login, register
+        ├── components/       # layout/ (Sidebar, Topbar, AppShell), charts, ItemCard, ItemsBrowser, ClaimPanel…
         └── lib/              # API helper, login state, notifications (WebSocket), heartbeat checker
 ```
 
@@ -274,7 +326,7 @@ lostfinder/
 ```powershell
 cd backend
 pip install -r requirements.txt
-python -m pytest -q          # 86 passed (no PostgreSQL, RabbitMQ or internet needed)
+python -m pytest -q          # 89 passed (no PostgreSQL, RabbitMQ or internet needed)
 cd ../frontend
 npm run lint                 # TypeScript check
 npm run build                # production build
@@ -284,7 +336,8 @@ npm run build                # production build
 - **`required variable … is missing a value`:** `.env` is missing or incomplete. Copy `.env.example` to `.env` and fill it in.
 - **Branches can't log in to the database after you changed `POSTGRES_PASSWORD`:** the databases keep the old password. Run `docker compose down -v` (deletes data), then `docker compose up`.
 - **RabbitMQ dashboard says "invalid credentials":** use `RABBITMQ_USER` / `RABBITMQ_PASSWORD` from `.env`, not guest/guest.
-- **Upload or a new feature says "Not Found":** the containers run old code. Run `docker compose up --build`.
+- **Upload or a new feature says "Not Found", or the web app looks old:** the containers run old code. Run `docker compose up --build`.
+- **`port is already allocated` for 3000:** `npm run dev` (or another program) is already using port 3000. Stop it, or run `docker compose stop web` and keep using `npm run dev`.
 - **No pop-ups:** the bell icon is crossed out while the WebSocket is reconnecting. Check that the branch you selected is online.
 - **Claim says "queued":** the item's home branch is offline. Start it (`docker compose start branch-b`) and the claim is delivered within a few seconds.
 - **`relation "queued_requests" does not exist`:** you upgraded from Phase 4 without resetting. Run `docker compose down -v`, then `docker compose up --build`.

@@ -27,9 +27,9 @@ export default function ItemMatches({ item }: { item: Item }) {
 
   return (
     <section className="mt-10">
-      <h2 className="flex items-center gap-2 text-lg font-semibold"><Sparkles className="h-5 w-5 text-violet-600" /> Possible matches</h2>
+      <h2 className="flex items-center gap-2 text-lg font-semibold"><Sparkles className="h-5 w-5 text-violet-600 dark:text-violet-400" /> Possible matches</h2>
       {matches.length === 0 ? (
-        <p className="mt-2 text-sm text-slate-500">
+        <p className="mt-2 text-sm text-ink-2">
           No similar {lookingFor} yet, at any branch. You&apos;ll get a notification as soon as one is reported.
         </p>
       ) : (
@@ -38,7 +38,7 @@ export default function ItemMatches({ item }: { item: Item }) {
             const src = photoUrl(branch.url, m.item.photo_hash);
             return (
               <Link key={m.id} href={`/items/${m.item.id}`} className="card group flex gap-4 p-4 transition hover:border-violet-300 hover:shadow-md">
-                <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 text-slate-400">
+                <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-md bg-panel-2 text-ink-3">
                   {src ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={src} alt="" className="h-full w-full object-cover" />
@@ -48,16 +48,16 @@ export default function ItemMatches({ item }: { item: Item }) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2"><TypeBadge type={m.item.type} /></div>
-                  <p className="mt-1 line-clamp-1 font-semibold text-slate-900">{m.item.title}</p>
-                  <p className="text-xs text-slate-500">{branchName(m.item.home_branch)} · {formatDate(m.item.event_date)}</p>
+                  <p className="mt-1 line-clamp-1 font-semibold text-ink">{m.item.title}</p>
+                  <p className="text-xs text-ink-2">{branchName(m.item.home_branch)} · {formatDate(m.item.event_date)}</p>
                   <div className="mt-2 flex items-center gap-2">
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-panel-2">
                       <div className="h-full rounded-full bg-violet-500" style={{ width: `${m.score}%` }} />
                     </div>
-                    <span className="text-xs font-semibold tabular-nums text-violet-700">{m.score}%</span>
+                    <span className="text-xs font-semibold tabular-nums text-violet-700 dark:text-violet-300">{m.score}%</span>
                   </div>
                 </div>
-                <ArrowRight className="h-4 w-4 shrink-0 self-center text-slate-300 transition group-hover:text-violet-500" />
+                <ArrowRight className="h-4 w-4 shrink-0 self-center text-ink-3 transition group-hover:text-violet-500" />
               </Link>
             );
           })}

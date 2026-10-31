@@ -49,21 +49,31 @@ def keywords(item: Item) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", text) if len(w) >= 3 and w not in STOPWORDS}
 
 
-def score(lost: Item, found: Item) -> int:
+def explain(lost: Item, found: Item) -> list[tuple[str, int]]:
+    """The reasons behind a score, as (reason, points). Empty if the pair can never match."""
     if lost.category != found.category:
-        return 0
+        return []
     gap = (found.event_date - lost.event_date).days
     if gap < -1:
-        return 0
-    points = 40
+        return []
+    reasons = [("Same category", 40)]
     if lost.colour and found.colour:
-        points += 20 if lost.colour == found.colour else 0
+        reasons.append(("Same colour", 20) if lost.colour == found.colour else ("Different colours", 0))
     else:
-        points += 10
-    shared = keywords(lost) & keywords(found)
-    points += min(20, 10 * len(shared))
-    points += 20 if gap <= 3 else 10 if gap <= 14 else 0
-    return min(points, 100)
+        reasons.append(("Colour not given on one report", 10))
+    shared = sorted(keywords(lost) & keywords(found))
+    if shared:
+        reasons.append((f"Shared words: {', '.join(shared[:4])}", min(20, 10 * len(shared))))
+    else:
+        reasons.append(("No shared descriptive words", 0))
+    days = max(gap, 0)
+    when = "the same day" if days == 0 else f"{days} day{'s' if days != 1 else ''} after it was lost"
+    reasons.append((f"Found {when}", 20 if gap <= 3 else 10 if gap <= 14 else 0))
+    return reasons
+
+
+def score(lost: Item, found: Item) -> int:
+    return min(sum(points for _, points in explain(lost, found)), 100)
 
 
 def find_new_matches(db: Session, item: Item) -> list[Match]:

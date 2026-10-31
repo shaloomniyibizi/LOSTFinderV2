@@ -1,10 +1,12 @@
 "use client";
 
-import { ClipboardCheck, ShieldAlert } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ClipboardCheck, PackageCheck, ShieldAlert, ShieldCheck } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import ClaimCard from "@/components/ClaimCard";
 import RequireLogin from "@/components/RequireLogin";
-import { Alert, EmptyState, PageHeader } from "@/components/ui";
+import { Alert, CardTabs, EmptyState, Hero, PageTitle } from "@/components/ui";
+import { useCounts } from "@/lib/counts";
 import { isOffline } from "@/lib/api";
 import { useApp } from "@/lib/app-context";
 import { branchName } from "@/lib/branches";
@@ -16,7 +18,7 @@ type Tab = "pending" | "collect" | "done";
 export default function StaffPage() {
   return (
     <RequireLogin reason="The staff desk is for branch staff.">
-      <StaffDesk />
+      <Suspense fallback={null}><StaffDesk /></Suspense>
     </RequireLogin>
   );
 }
@@ -26,7 +28,11 @@ function StaffDesk() {
   const { liveVersion } = useNotifications();
   const [claims, setClaims] = useState<Claim[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("pending");
+  const params = useSearchParams();
+  const router = useRouter();
+  const tab: Tab = (["pending", "collect", "done"] as Tab[]).includes(params.get("tab") as Tab) ? (params.get("tab") as Tab) : "pending";
+  const setTab = (t: Tab) => router.replace(`/staff?tab=${t}`);
+  const counts = useCounts();
   const isStaff = user?.role === "staff" || user?.role === "admin";
 
   const load = useCallback(() => {
@@ -44,7 +50,7 @@ function StaffDesk() {
 
   if (!isStaff) {
     return (
-      <div className="mx-auto max-w-xl px-4 py-16">
+      <div className="mx-auto max-w-xl py-10">
         <EmptyState icon={ShieldAlert} title="Staff only">
           This page is for branch staff. An admin can give your account the staff role.
         </EmptyState>
@@ -57,41 +63,36 @@ function StaffDesk() {
     collect: claims?.filter((c) => c.status === "APPROVED" && !c.handed_over_at) ?? [],
     done: claims?.filter((c) => c.status === "REJECTED" || !!c.handed_over_at) ?? [],
   };
-  const tabs: [Tab, string][] = [
-    ["pending", "To verify"],
-    ["collect", "Waiting for collection"],
-    ["done", "Closed"],
-  ];
-  const replace = (c: Claim) => setClaims((all) => all?.map((x) => (x.id === c.id ? c : x)) ?? null);
+  const replace = (c: Claim) => {
+    setClaims((all) => all?.map((x) => (x.id === c.id ? c : x)) ?? null);
+    counts.refresh();
+  };
+  const scope = user?.role === "admin" ? "All branches (admin view)" : `Items held by the ${branchName(user?.branch_id)} branch`;
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
-      <PageHeader
-        title="Staff desk"
-        subtitle={user?.role === "admin" ? "All branches' claims (admin view)." : `Claims on items held by the ${branchName(user?.branch_id)} branch.`}
-      />
-
-      <div className="mt-6 flex flex-wrap gap-2">
-        {tabs.map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${tab === key ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:text-slate-900"}`}>
-            {label}
-            <span className={`ml-2 rounded-full px-2 py-0.5 text-xs ${tab === key ? "bg-white/20" : "bg-slate-100"}`}>{groups[key].length}</span>
-          </button>
-        ))}
+    <>
+      <PageTitle crumbs={[{ label: "Security desk" }, { label: tab === "pending" ? "Review queue" : tab === "collect" ? "Awaiting handover" : "Closed" }]} />
+      <Hero tone="blue" icon={ShieldCheck} title="Security desk"
+        subtitle={`${scope}. Check each claimant's answer against the item before approving; hand items over only with an ID.`} />
+      <div className="card">
+        <CardTabs value={tab} onChange={setTab} tabs={[
+          { value: "pending", label: "Review queue", icon: ClipboardCheck, count: groups.pending.length, countCls: "bg-rose-600 text-white" },
+          { value: "collect", label: "Awaiting handover", icon: PackageCheck, count: groups.collect.length, countCls: "bg-blue-600 text-white" },
+          { value: "done", label: "Closed", count: groups.done.length, countCls: "bg-ink-3/40 text-ink" },
+        ]} />
+        <div className="p-4">
+          {error && <div className="mb-4"><Alert>{error}</Alert></div>}
+          {claims === null && <p className="text-sm text-ink-2">Loading…</p>}
+          {claims && groups[tab].length === 0 && (
+            <EmptyState bare icon={ClipboardCheck} title={tab === "pending" ? "No claims to verify" : "Nothing here"}>
+              {tab === "pending" ? "New claims appear here instantly." : ""}
+            </EmptyState>
+          )}
+          <div className="grid gap-4 xl:grid-cols-2">
+            {groups[tab].map((c) => <ClaimCard key={c.id} claim={c} staffView showItem onChanged={replace} />)}
+          </div>
+        </div>
       </div>
-
-      {error && <div className="mt-6"><Alert>{error}</Alert></div>}
-
-      <div className="mt-6 space-y-4">
-        {claims === null && <p className="text-sm text-slate-500">Loading…</p>}
-        {claims && groups[tab].length === 0 && (
-          <EmptyState icon={ClipboardCheck} title={tab === "pending" ? "No claims to verify" : "Nothing here"}>
-            {tab === "pending" ? "New claims appear here instantly." : ""}
-          </EmptyState>
-        )}
-        {groups[tab].map((c) => <ClaimCard key={c.id} claim={c} staffView showItem onChanged={replace} />)}
-      </div>
-    </div>
+    </>
   );
 }

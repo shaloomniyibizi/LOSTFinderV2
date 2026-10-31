@@ -1,17 +1,15 @@
 "use client";
 
-import { Inbox, Plus } from "lucide-react";
+import { FileText, Inbox, Package, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import ClaimCard from "@/components/ClaimCard";
-import { QueuedCard } from "@/components/ClaimPanel";
 import ItemCard, { ItemCardSkeleton } from "@/components/ItemCard";
 import RequireLogin from "@/components/RequireLogin";
-import { Alert, EmptyState, PageHeader } from "@/components/ui";
+import { Alert, EmptyState, Hero, PageTitle, PillTabs } from "@/components/ui";
 import { isOffline } from "@/lib/api";
 import { useApp } from "@/lib/app-context";
 import { useNotifications } from "@/lib/notifications";
-import type { Claim, ItemPage, ItemType, QueuedClaim } from "@/lib/types";
+import type { ItemPage, ItemType } from "@/lib/types";
 
 export default function MyItemsPage() {
   return (
@@ -23,20 +21,12 @@ export default function MyItemsPage() {
 
 function MyItems() {
   const { api, branch } = useApp();
+  const { liveVersion } = useNotifications();
   const [data, setData] = useState<ItemPage | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<ItemType | "ALL">("ALL");
-  const [claims, setClaims] = useState<Claim[]>([]);
-  const [queued, setQueued] = useState<QueuedClaim[]>([]);
-  const { liveVersion } = useNotifications();
+  const [tab, setTab] = useState<ItemType | "ALL" | "CLOSED">("ALL");
 
   useEffect(() => {
-    api<Claim[]>("/claims/mine").then(setClaims).catch(() => setClaims([]));
-    api<QueuedClaim[]>("/claims/queued/mine").then((qs) => setQueued(qs.filter((q) => q.status !== "DELIVERED"))).catch(() => setQueued([]));
-  }, [api, liveVersion]);
-
-  useEffect(() => {
-    setData(null);
     setError(null);
     api<ItemPage>("/items/mine")
       .then(setData)
@@ -44,67 +34,39 @@ function MyItems() {
         setError(isOffline(err) ? `${branch.name} branch is not reachable. Try another branch.` : (err as Error).message);
         setData({ total: 0, items: [] });
       });
-  }, [api, branch.name]);
+  }, [api, branch.name, liveVersion]);
 
-  const items = data?.items.filter((i) => tab === "ALL" || i.type === tab) ?? null;
-  const count = (t: ItemType) => data?.items.filter((i) => i.type === t).length ?? 0;
+  const all = data?.items ?? [];
+  const closed = (s: string) => s === "RETURNED" || s === "CLAIMED";
+  const items = data ? all.filter((i) => tab === "ALL" || (tab === "CLOSED" ? closed(i.status) : i.type === tab && !closed(i.status))) : null;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-      <PageHeader title="My reports" subtitle="Everything you have reported, at any branch.">
-        <Link href="/report" className="btn-primary"><Plus className="h-4 w-4" /> New report</Link>
-      </PageHeader>
+    <>
+      <PageTitle crumbs={[{ label: "My reports" }]} />
+      <Hero tone="green" icon={FileText} title="My reports" subtitle="Everything you have reported, at any branch. Each report is stored at the branch where you made it and copied to the others."
+        actions={<>
+          <Link href="/report?type=LOST" className="btn-warning"><Search className="h-4 w-4" /> Report lost item</Link>
+          <Link href="/report?type=FOUND" className="btn-light"><Package className="h-4 w-4" /> Turn in found item</Link>
+        </>}>
+        <div className="p-4">
+          <PillTabs value={tab} onChange={setTab} tabs={[
+            { value: "ALL", label: "All", count: all.length },
+            { value: "LOST", label: "Lost, still searching", count: all.filter((i) => i.type === "LOST" && !closed(i.status)).length },
+            { value: "FOUND", label: "Found, waiting for owner", count: all.filter((i) => i.type === "FOUND" && !closed(i.status)).length },
+            { value: "CLOSED", label: "Resolved", count: all.filter((i) => closed(i.status)).length },
+          ]} />
+        </div>
+      </Hero>
 
-      <div className="mt-6 inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
-        {([
-          ["ALL", `All (${data?.total ?? 0})`],
-          ["LOST", `Lost (${count("LOST")})`],
-          ["FOUND", `Found (${count("FOUND")})`],
-        ] as const).map(([v, label]) => (
-          <button key={v} onClick={() => setTab(v)}
-            className={`rounded-lg px-4 py-1.5 text-sm font-semibold transition ${tab === v ? "bg-slate-900 text-white" : "text-slate-600 hover:text-slate-900"}`}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {error && <div className="mt-6"><Alert>{error}</Alert></div>}
-
-      <div className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {error && <div className="mb-5"><Alert>{error}</Alert></div>}
+      <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {items === null
-          ? Array.from({ length: 4 }).map((_, i) => <ItemCardSkeleton key={i} />)
+          ? Array.from({ length: 3 }).map((_, i) => <ItemCardSkeleton key={i} />)
           : items.map((item) => <ItemCard key={item.id} item={item} />)}
       </div>
       {items && items.length === 0 && !error && (
-        <EmptyState icon={Inbox} title="No reports yet">
-          When you report a lost or found item, it will appear here.
-        </EmptyState>
+        <EmptyState icon={Inbox} title="No reports here">When you report a lost or found item, it will appear here.</EmptyState>
       )}
-
-      {queued.length > 0 && (
-        <section className="mt-12">
-          <h2 className="text-xl font-bold tracking-tight">Claims waiting for an offline branch</h2>
-          <p className="mt-1 text-sm text-slate-500">Saved at {branch.name}. They are sent automatically when the item&apos;s branch is back.</p>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            {queued.map((q) => (
-              <div key={q.id}>
-                <Link href={`/items/${q.item_id}`} className="mb-2 block font-semibold text-slate-900 hover:text-indigo-700">{q.item_title ?? "Item"}</Link>
-                <QueuedCard q={q} />
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {claims.length > 0 && (
-        <section className="mt-12">
-          <h2 className="text-xl font-bold tracking-tight">My claims</h2>
-          <p className="mt-1 text-sm text-slate-500">Items you said are yours, and what staff decided.</p>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            {claims.map((c) => <ClaimCard key={c.id} claim={c} showItem />)}
-          </div>
-        </section>
-      )}
-    </div>
+    </>
   );
 }
