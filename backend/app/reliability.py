@@ -230,7 +230,7 @@ def apply_snapshot(data: dict) -> dict:
     changed_items = []
     with SessionLocal() as db:
         for u in data.get("users", []):
-            if apply_event(db, "user.created", {"origin": origin, "data": u}) == "inserted":
+            if apply_event(db, "user.updated", {"origin": origin, "data": u}) in ("inserted", "updated"):
                 counts["users"] += 1
         db.commit()
         for it in data.get("items", []):

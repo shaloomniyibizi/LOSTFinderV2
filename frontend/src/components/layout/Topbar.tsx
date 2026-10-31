@@ -24,6 +24,7 @@ const TITLES: [string, string][] = [
   ["/staff", "Security desk"],
   ["/status", "Network status"],
   ["/profile", "My profile"],
+  ["/admin/users", "User management"],
   ["/items", "Item details"],
 ];
 

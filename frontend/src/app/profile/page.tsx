@@ -1,16 +1,18 @@
 "use client";
 
-import { Building2, Calendar, LogOut, Mail, Monitor, Moon, Phone, ShieldCheck, Sun, UserRound } from "lucide-react";
+import { Building2, Calendar, KeyRound, LogOut, Mail, Monitor, Moon, Pencil, ShieldCheck, Sun, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import BranchSwitcher from "@/components/BranchSwitcher";
 import { Avatar } from "@/components/layout/Topbar";
 import RequireLogin from "@/components/RequireLogin";
-import { PageTitle, StatCard } from "@/components/ui";
+import { Alert, PageTitle, Spinner, StatCard } from "@/components/ui";
 import { useApp } from "@/lib/app-context";
 import { branchName } from "@/lib/branches";
 import { useCounts } from "@/lib/counts";
 import { formatDate } from "@/lib/format";
+import { useNotifications } from "@/lib/notifications";
+import type { User } from "@/lib/types";
 import { type ThemeChoice, useTheme } from "@/lib/theme";
 
 export default function ProfilePage() {
@@ -43,7 +45,7 @@ function Profile() {
     <>
       <PageTitle title="My profile" crumbs={[{ label: "My profile" }]} />
       <div className="grid gap-6 xl:grid-cols-[360px_1fr]">
-        <div className="card overflow-hidden">
+        <div className="card self-start overflow-hidden">
           <div className="h-24 bg-gradient-to-r from-[#162a5b] to-[#2f6ae0]" />
           <div className="-mt-10 flex flex-col items-center px-5 pb-6 text-center">
             <Avatar name={user.full_name} size={80} />
@@ -62,11 +64,13 @@ function Profile() {
             <StatCard icon={ShieldCheck} tint="green" label="Items returned to me" value={me?.returned_to_me ?? "–"} href="/claims" />
             <StatCard icon={Building2} tint="amber" label="Items I turned in" value={me?.found_waiting ?? "–"} href="/my-items" />
           </div>
+          <div className="grid gap-6 2xl:grid-cols-2">
+            <EditProfile />
+            <ChangePassword />
+          </div>
           <div className="card">
             <div className="card-header"><UserRound className="h-4 w-4 text-brand" /> Account details</div>
-            <Row icon={UserRound} label="Name">{user.full_name}</Row>
             <Row icon={Mail} label="Email">{user.email}</Row>
-            <Row icon={Phone} label="Phone">{user.phone || <span className="text-ink-3">Not given</span>}</Row>
             <Row icon={ShieldCheck} label="Role">{role}</Row>
             <Row icon={Calendar} label="Member since">{formatDate(user.created_at)}</Row>
           </div>
@@ -92,5 +96,97 @@ function Profile() {
         </div>
       </div>
     </>
+  );
+}
+
+function EditProfile() {
+  const { user, api, updateUser } = useApp();
+  const { pushToast } = useNotifications();
+  const [name, setName] = useState(user?.full_name ?? "");
+  const [phone, setPhone] = useState(user?.phone ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const changed = name !== user?.full_name || phone !== (user?.phone ?? "");
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      updateUser(await api<User>("/auth/me", { method: "PATCH", json: { full_name: name, phone: phone || null } }));
+      pushToast({ kind: "info", title: "Profile saved", message: "Your details were updated at every branch." });
+    } catch (err) {
+      setError((err as Error).message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <form onSubmit={submit} className="card">
+      <div className="card-header"><Pencil className="h-4 w-4 text-brand" /> Edit profile</div>
+      <div className="space-y-4 p-5">
+        <div>
+          <label className="label" htmlFor="p-name">Full name</label>
+          <input id="p-name" className="input" required minLength={2} maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div>
+          <label className="label" htmlFor="p-phone">Phone <span className="font-normal text-ink-3">(staff use it to contact you about claims)</span></label>
+          <input id="p-phone" className="input" maxLength={30} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+250 7…" />
+        </div>
+        {error && <Alert>{error}</Alert>}
+        <button className="btn-primary" disabled={busy || !changed}>{busy ? <Spinner className="h-4 w-4" /> : "Save changes"}</button>
+      </div>
+    </form>
+  );
+}
+
+function ChangePassword() {
+  const { api } = useApp();
+  const { pushToast } = useNotifications();
+  const [form, setForm] = useState({ current: "", next: "", again: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (form.next !== form.again) {
+      setError("The two new passwords are not the same.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/auth/me/password", { method: "POST", json: { current_password: form.current, new_password: form.next } });
+      setForm({ current: "", next: "", again: "" });
+      pushToast({ kind: "info", title: "Password changed", message: "Use your new password at any branch from now on." });
+    } catch (err) {
+      setError((err as Error).message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <form onSubmit={submit} className="card">
+      <div className="card-header"><KeyRound className="h-4 w-4 text-brand" /> Change password</div>
+      <div className="space-y-4 p-5">
+        <div>
+          <label className="label" htmlFor="pw-cur">Current password</label>
+          <input id="pw-cur" type="password" className="input" required autoComplete="current-password" value={form.current} onChange={set("current")} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="label" htmlFor="pw-new">New password</label>
+            <input id="pw-new" type="password" className="input" required minLength={6} maxLength={72} autoComplete="new-password" value={form.next} onChange={set("next")} />
+          </div>
+          <div>
+            <label className="label" htmlFor="pw-again">New password again</label>
+            <input id="pw-again" type="password" className="input" required minLength={6} maxLength={72} autoComplete="new-password" value={form.again} onChange={set("again")} />
+          </div>
+        </div>
+        {error && <Alert>{error}</Alert>}
+        <button className="btn-primary" disabled={busy}>{busy ? <Spinner className="h-4 w-4" /> : "Change password"}</button>
+      </div>
+    </form>
   );
 }

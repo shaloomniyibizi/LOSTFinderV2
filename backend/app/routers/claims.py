@@ -217,6 +217,7 @@ def handover(claim_id: uuid.UUID, request: Request, data: ClaimDecision | None =
 # ---------------------------------------------------------------- lists
 @router.get("/claims/mine", response_model=list[ClaimOut])
 def my_claims(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Your claims, at any branch, newest first."""
     claims = db.scalars(select(Claim).where(Claim.claimant_id == user.id).order_by(Claim.created_at.desc())).all()
     return [_to_out(db, c) for c in claims]
 

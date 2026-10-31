@@ -81,6 +81,9 @@ def user_payload(user: User) -> dict:
         "role": user.role.value,
         "branch_id": user.branch_id,
         "created_at": user.created_at.isoformat(),
+        "is_active": user.is_active,
+        "version": user.version or 1,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
     }
 
 
@@ -126,6 +129,10 @@ def record_event(db: Session, event_type: str, data: dict) -> None:
 # ----------------------------------------------------------------------------
 # Applying events received from other branches
 # ----------------------------------------------------------------------------
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _dt(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -197,25 +204,38 @@ def apply_event(db: Session, event_type: str, envelope: dict) -> str:
             return "updated"
         return "ignored: not newer"
 
-    if event_type == "user.created":
+    if event_type in ("user.created", "user.updated"):
         user_id = uuid.UUID(data["id"])
-        if db.get(User, user_id) is not None:
-            return "ignored: already exists"
-        if db.scalar(select(User).where(User.email == data["email"])) is not None:
-            # Same email signed up at two branches before they synced. Keep the local one.
-            log.warning("user.created conflict: email %s already used here", data["email"])
-            return "ignored: email conflict"
-        db.add(User(
-            id=user_id,
+        fields = dict(
             full_name=data["full_name"],
             email=data["email"],
             phone=data.get("phone"),
             password_hash=data["password_hash"],
             role=Role(data["role"]),
             branch_id=data.get("branch_id"),
-            created_at=_dt(data.get("created_at")),
-        ))
-        return "inserted"
+            is_active=data.get("is_active", True),
+            version=int(data.get("version") or 1),
+            updated_at=_dt(data.get("updated_at")),
+        )
+        existing = db.get(User, user_id)
+        if existing is None:
+            if db.scalar(select(User).where(User.email == data["email"])) is not None:
+                # Same email signed up at two branches before they synced. Keep the local one.
+                log.warning("user conflict: email %s already used here", data["email"])
+                return "ignored: email conflict"
+            db.add(User(id=user_id, created_at=_dt(data.get("created_at")), **fields))
+            return "inserted"
+        # Accounts can be changed at any branch: the higher version wins, a tie goes to the later change
+        newer = fields["version"] > (existing.version or 1) or (
+            fields["version"] == (existing.version or 1)
+            and fields["updated_at"] is not None
+            and (existing.updated_at is None or fields["updated_at"] > _aware(existing.updated_at))
+        )
+        if not newer:
+            return "ignored: not newer"
+        for k, v in fields.items():
+            setattr(existing, k, v)
+        return "updated"
 
     return f"ignored: unknown event {event_type}"
 

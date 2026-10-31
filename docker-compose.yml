@@ -10,6 +10,7 @@
 # PRIVATE VALUES (passwords, secrets, API keys) live in the ".env" file next to this one.
 # First time:  copy .env.example to .env and fill it in. Never share or commit .env.
 #
+# Easiest:          lostfinder start     (Windows: lostfinder.cmd start, macOS/Linux: ./lostfinder.sh start)
 # Start:            docker compose up --build
 # Stop:             docker compose down
 # Wipe all data:    docker compose down -v
@@ -28,6 +29,14 @@ x-db: &db
 x-db-env: &db-env
   POSTGRES_USER: ${POSTGRES_USER:-postgres}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example to .env first)}
+
+# A branch is "healthy" when its /health endpoint answers (used by: docker compose up --wait)
+x-branch-health: &branch-health
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+  interval: 10s
+  timeout: 5s
+  retries: 6
+  start_period: 30s
 
 x-branch-env: &branch-env
   # --- secrets, all from .env ---
@@ -101,6 +110,7 @@ services:
       BRANCH_NAME: Campus
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db-a:5432/branch_a
     ports: ["8001:8000"]
+    healthcheck: *branch-health
     volumes: [photos-data:/data/photos]
     depends_on:
       db-a: { condition: service_healthy }
@@ -114,6 +124,7 @@ services:
       BRANCH_NAME: Bus Park
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db-b:5432/branch_b
     ports: ["8002:8000"]
+    healthcheck: *branch-health
     volumes: [photos-data:/data/photos]
     depends_on:
       db-b: { condition: service_healthy }
@@ -127,6 +138,7 @@ services:
       BRANCH_NAME: Airport
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db-c:5432/branch_c
     ports: ["8003:8000"]
+    healthcheck: *branch-health
     volumes: [photos-data:/data/photos]
     depends_on:
       db-c: { condition: service_healthy }
@@ -143,6 +155,12 @@ services:
     ports: ["3000:3000"]
     depends_on: [branch-a, branch-b, branch-c]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
 volumes:
   photos-data:

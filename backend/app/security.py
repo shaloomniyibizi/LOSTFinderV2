@@ -64,7 +64,10 @@ def user_from_token(db: Session, token: str) -> User | None:
         user_id = uuid.UUID(payload["sub"])
     except (jwt.PyJWTError, KeyError, ValueError):
         return None
-    return db.get(User, user_id)
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:  # a disabled account is signed out at every branch
+        return None
+    return user
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:

@@ -34,6 +34,16 @@ export interface User {
   role: Role;
   branch_id: string | null;
   created_at: string;
+  is_active?: boolean;
+}
+
+/** Phase 6: what an admin sees in the user list (GET /users). */
+export interface AdminUser extends User {
+  is_active: boolean;
+  version: number;
+  updated_at: string | null;
+  reports: number;
+  claims: number;
 }
 
 export interface LoginResponse {
