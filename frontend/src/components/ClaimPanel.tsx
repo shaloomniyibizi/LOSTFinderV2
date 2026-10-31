@@ -4,6 +4,7 @@ import { Clock, HandHelping, Info, LockKeyhole, PackageCheck, XCircle } from "lu
 import Link from "next/link";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { canEdit, isStaffFor, useApp } from "@/lib/app-context";
+import { useAuthModal } from "@/lib/auth-modal";
 import { branchName } from "@/lib/branches";
 import { useNotifications } from "@/lib/notifications";
 import { timeAgo } from "@/lib/format";
@@ -14,6 +15,7 @@ import { Alert, Spinner } from "./ui";
 /** On a FOUND item's page: claim it as yours, follow your claim, or (staff) decide on claims. */
 export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItemChanged: () => void }) {
   const { api, user } = useApp();
+  const { openAuth } = useAuthModal();
   const { liveVersion } = useNotifications();
   const [fetched, setFetched] = useState<Claim[]>([]);
   // A claim we just made is decided at the item's home branch and only reaches THIS branch's copy
@@ -64,11 +66,11 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
   const claimable = item.status === "OPEN" || item.status === "MATCHED";
 
   return (
-    <div className="space-y-4">
-      <h2 className="flex items-center gap-2 text-lg font-semibold"><HandHelping className="h-5 w-5 text-indigo-600" /> Is this yours?</h2>
+    <div id="claim" className="scroll-mt-20 space-y-4">
+      <h2 className="flex items-center gap-2 text-lg font-semibold"><HandHelping className="h-5 w-5 text-blue-600 dark:text-blue-400" /> Is this yours?</h2>
 
       {item.status === "RETURNED" && (
-        <div className="flex gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+        <div className="flex gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-900 dark:text-emerald-300">
           <PackageCheck className="h-5 w-5 shrink-0" /> This item has been returned to its owner.
         </div>
       )}
@@ -82,19 +84,19 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
       {/* Form to claim it */}
       {!user && claimable && (
         <div className="card flex items-center justify-between gap-3 p-4 text-sm">
-          <span className="flex items-center gap-2 text-slate-600"><LockKeyhole className="h-4 w-4" /> Log in to claim this item.</span>
-          <Link href={`/login?next=/items/${item.id}`} className="btn-primary">Log in</Link>
+          <span className="flex items-center gap-2 text-ink-2"><LockKeyhole className="h-4 w-4" /> Log in to claim this item.</span>
+          <button onClick={() => openAuth("login")} className="btn-primary">Sign in</button>
         </div>
       )}
       {user && claimable && !isReporter && !myActive && !staff && (
         <form onSubmit={submit} className="card space-y-3 p-5">
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-ink-2">
             Staff at the <b>{branchName(item.home_branch)}</b> branch will check your answer before handing the item over.
           </p>
           {item.verification_question ? (
-            <div className="rounded-xl bg-indigo-50 px-3 py-2 text-sm text-indigo-900"><b>Question:</b> {item.verification_question}</div>
+            <div className="rounded-md bg-blue-500/10 px-3 py-2 text-sm text-blue-900 dark:text-blue-300"><b>Question:</b> {item.verification_question}</div>
           ) : (
-            <p className="text-sm text-slate-500">Describe something only the owner would know (marks, contents, serial number…).</p>
+            <p className="text-sm text-ink-2">Describe something only the owner would know (marks, contents, serial number…).</p>
           )}
           <textarea className="input min-h-24" required minLength={5} maxLength={2000} value={answer} onChange={(e) => setAnswer(e.target.value)}
             placeholder={item.verification_question ? "Your answer" : "Details that prove it's yours"} />
@@ -106,7 +108,7 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
       )}
 
       {item.status === "CLAIMED" && !myActive && !staff && !isReporter && (
-        <div className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <div className="flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-300">
           <Info className="h-5 w-5 shrink-0" /> Someone has claimed this item and staff are checking it. If their claim is not accepted, you can claim it.
         </div>
       )}
@@ -114,14 +116,14 @@ export default function ClaimPanel({ item, onItemChanged }: { item: Item; onItem
       {/* Staff and the finder see every claim */}
       {(staff || isReporter) && all && all.length > 0 && (
         <div className="space-y-3">
-          <p className="text-sm font-semibold text-slate-700">{staff ? "Claims to review" : "Claims on the item you found"}</p>
+          <p className="text-sm font-semibold text-ink">{staff ? "Claims to review" : "Claims on the item you found"}</p>
           {all.map((c) => (
             <ClaimCard key={c.id} claim={c} staffView={staff} onChanged={() => { load(); onItemChanged(); }} />
           ))}
         </div>
       )}
       {(staff || (isReporter && canEdit(user, item))) && all && all.length === 0 && (
-        <p className="text-sm text-slate-500">No claims yet.</p>
+        <p className="text-sm text-ink-2">No claims yet.</p>
       )}
     </div>
   );
@@ -132,7 +134,7 @@ export function QueuedCard({ q }: { q: QueuedClaim }) {
   const where = branchName(q.target_branch);
   if (q.status === "FAILED") {
     return (
-      <div className="flex gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
+      <div className="flex gap-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-sm text-rose-900 dark:text-rose-300">
         <XCircle className="h-5 w-5 shrink-0" />
         <p><b>Your queued claim was not accepted by {where}.</b> {q.last_error}</p>
       </div>
@@ -140,21 +142,21 @@ export function QueuedCard({ q }: { q: QueuedClaim }) {
   }
   if (q.status === "DELIVERED") {
     return (
-      <div className="flex gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+      <div className="flex gap-3 rounded-lg border border-sky-500/30 bg-sky-500/10 p-4 text-sm text-sky-900 dark:text-sky-300">
         <Info className="h-5 w-5 shrink-0" />
         <p>Your claim was delivered to {where} {q.delivered_at ? timeAgo(q.delivered_at) : ""}. Its status will appear here in a moment.</p>
       </div>
     );
   }
   return (
-    <div className="flex gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+    <div className="flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-300">
       <Clock className="h-5 w-5 shrink-0 animate-pulse" />
       <div>
         <p className="font-semibold">Claim queued: {where} is offline</p>
         <p className="mt-0.5">
           Your claim is saved here and will be sent to {where} automatically as soon as it is back. You don&apos;t need to do anything.
         </p>
-        <p className="mt-1 text-xs text-amber-700">Saved {timeAgo(q.created_at)} · delivery attempts: {q.attempts}</p>
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">Saved {timeAgo(q.created_at)} · delivery attempts: {q.attempts}</p>
       </div>
     </div>
   );

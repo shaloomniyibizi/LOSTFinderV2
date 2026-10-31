@@ -104,8 +104,15 @@ def test_report_item_sets_home_branch_and_version(client):
 
 def test_future_date_rejected(client):
     headers = register(client, "f2@example.com")
+    in_two_days = (date.today() + timedelta(days=2)).isoformat()
+    assert client.post("/items", headers=headers, json=found_laptop(event_date=in_two_days)).status_code == 422
+
+
+def test_users_ahead_of_server_time_can_report_today(client):
+    """Just after midnight in Kigali (UTC+2) it is still yesterday on a UTC server."""
+    headers = register(client, "f2b@example.com")
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
-    assert client.post("/items", headers=headers, json=found_laptop(event_date=tomorrow)).status_code == 422
+    assert client.post("/items", headers=headers, json=found_laptop(event_date=tomorrow)).status_code == 201
 
 
 def test_search_filters(client):

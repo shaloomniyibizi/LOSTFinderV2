@@ -1,6 +1,6 @@
 """Report, search, view and update lost/found items."""
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import func, or_, select
@@ -24,6 +24,12 @@ def _get_item_or_404(db: Session, item_id: uuid.UUID) -> Item:
     return item
 
 
+def _latest_allowed_date() -> date:
+    """The server clock may be in UTC while users are in Kigali (UTC+2) or elsewhere, so just
+    after midnight their "today" is the server's tomorrow. Allow one day of difference."""
+    return date.today() + timedelta(days=1)
+
+
 def _ensure_home_branch(item: Item) -> None:
     """Only the item's home branch may change it (it is the 'primary', like in GFS)."""
     if item.home_branch != settings.branch_id:
@@ -37,7 +43,7 @@ def _ensure_home_branch(item: Item) -> None:
 def report_item(data: ItemIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Report a LOST or FOUND item. Any logged-in user can report either type.
     This branch becomes the item's home branch, and a copy is sent to the other branches."""
-    if data.event_date > date.today():
+    if data.event_date > _latest_allowed_date():
         raise HTTPException(422, "event_date cannot be in the future")
     item = Item(
         type=data.type,
@@ -190,7 +196,7 @@ def update_item(
     changes = data.model_dump(exclude_unset=True)
     if "status" in changes and not (is_branch_staff or user.role == Role.admin):
         raise HTTPException(403, "Only branch staff or an admin can change the status")
-    if changes.get("event_date") and changes["event_date"] > date.today():
+    if changes.get("event_date") and changes["event_date"] > _latest_allowed_date():
         raise HTTPException(422, "event_date cannot be in the future")
     if not changes:
         return item

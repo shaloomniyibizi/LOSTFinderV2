@@ -45,10 +45,10 @@ export default function BranchDownBanner() {
   const alternatives = BRANCHES.filter((b) => b.id !== branch.id && health[b.id]?.online);
 
   return (
-    <div className="border-b border-amber-200 bg-amber-50">
+    <div className="border-b border-amber-500/30 bg-amber-500/10">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3 text-sm sm:px-6">
-        <WifiOff className="h-4 w-4 shrink-0 text-amber-600" />
-        <p className="text-amber-900">
+        <WifiOff className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+        <p className="text-amber-900 dark:text-amber-300">
           <b>{branch.name}</b> branch is not responding.{" "}
           {alternatives.length
             ? "Switching to another branch automatically…"

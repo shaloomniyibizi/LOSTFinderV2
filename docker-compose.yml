@@ -1,5 +1,7 @@
-# LostFinder: three branches, each with its OWN PostgreSQL database, connected by RabbitMQ.
+# LostFinder: three branches, each with its OWN PostgreSQL database, connected by RabbitMQ,
+# and the web app.
 #
+#   Web app             -> http://localhost:3000
 #   Branch A (Campus)   -> http://localhost:8001/docs   database db-a (port 5433)
 #   Branch B (Bus Park) -> http://localhost:8002/docs   database db-b (port 5434)
 #   Branch C (Airport)  -> http://localhost:8003/docs   database db-c (port 5435)
@@ -129,6 +131,18 @@ services:
     depends_on:
       db-c: { condition: service_healthy }
       rabbitmq: { condition: service_started }
+
+  # The web app (Next.js). The browser talks to the branches directly, through the ports above.
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_BRANCH_A_URL: ${WEB_BRANCH_A_URL:-http://localhost:8001}
+        NEXT_PUBLIC_BRANCH_B_URL: ${WEB_BRANCH_B_URL:-http://localhost:8002}
+        NEXT_PUBLIC_BRANCH_C_URL: ${WEB_BRANCH_C_URL:-http://localhost:8003}
+    ports: ["3000:3000"]
+    depends_on: [branch-a, branch-b, branch-c]
+    restart: unless-stopped
 
 volumes:
   photos-data:

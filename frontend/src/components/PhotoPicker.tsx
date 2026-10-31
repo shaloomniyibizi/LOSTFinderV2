@@ -60,8 +60,8 @@ export default function PhotoPicker({
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        className={`relative flex min-h-48 cursor-pointer items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed transition ${
-          dragging ? "border-indigo-500 bg-indigo-50" : "border-slate-300 bg-slate-50 hover:border-indigo-400 hover:bg-indigo-50/40"
+        className={`relative flex min-h-48 cursor-pointer items-center justify-center overflow-hidden rounded-lg border-2 border-dashed transition ${
+          dragging ? "border-blue-500 bg-blue-500/10" : "border-line bg-panel-2 hover:border-blue-400 hover:bg-blue-500/10"
         }`}
         role="button"
         tabIndex={0}
@@ -79,7 +79,7 @@ export default function PhotoPicker({
                   e.stopPropagation();
                   onChange(null);
                 }}
-                className="absolute right-3 top-3 rounded-full bg-slate-900/70 p-1.5 text-white hover:bg-slate-900"
+                className="absolute right-3 top-3 rounded-full bg-brand-strong/70 p-1.5 text-white hover:bg-brand-strong"
                 aria-label="Remove photo"
               >
                 <X className="h-4 w-4" />
@@ -88,16 +88,16 @@ export default function PhotoPicker({
           </>
         ) : (
           <div className="flex flex-col items-center gap-2 px-6 py-8 text-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200">
+            <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-panel text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-line">
               <ImagePlus className="h-6 w-6" />
             </span>
-            <p className="text-sm font-semibold text-slate-700">Drop a photo here, or click to choose</p>
-            <p className="text-xs text-slate-500">JPEG, PNG or WebP · up to 5 MB</p>
+            <p className="text-sm font-semibold text-ink">Drop a photo here, or click to choose</p>
+            <p className="text-xs text-ink-2">JPEG, PNG or WebP · up to 5 MB</p>
           </div>
         )}
       </div>
-      {file && <p className="mt-2 text-xs text-slate-500">{file.name} · {(file.size / 1024).toFixed(0)} KB</p>}
-      {error && <p className="mt-2 text-sm text-rose-600">{error}</p>}
+      {file && <p className="mt-2 text-xs text-ink-2">{file.name} · {(file.size / 1024).toFixed(0)} KB</p>}
+      {error && <p className="mt-2 text-sm text-rose-600 dark:text-rose-400">{error}</p>}
       <input ref={input} type="file" accept={TYPES.join(",")} className="hidden" onChange={(e) => choose(e.target.files?.[0])} />
     </div>
   );

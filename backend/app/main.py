@@ -18,7 +18,7 @@ from .database import Base, SessionLocal, engine
 from .models import Branch, Role, User
 from . import reliability, replication
 from .notifier import notifier
-from .routers import auth, branches, claims, health, items, live, photos
+from .routers import auth, branches, claims, health, items, live, photos, stats
 from .routers import replication as replication_router
 from .security import hash_password
 
@@ -81,4 +81,5 @@ app.include_router(items.router)
 app.include_router(photos.router)
 app.include_router(claims.router)
 app.include_router(live.router)
+app.include_router(stats.router)
 app.include_router(replication_router.router)

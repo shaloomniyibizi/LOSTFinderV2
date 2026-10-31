@@ -47,7 +47,7 @@ def check(quiet: bool = False) -> tuple[bool, dict, list[str]]:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--wait", type=float, default=0, help="keep checking for up to this many seconds")
+    parser.add_argument("--wait", type=float, nargs="?", const=60, default=0, help="keep checking for up to this many seconds")
     args = parser.parse_args()
 
     start = time.perf_counter()

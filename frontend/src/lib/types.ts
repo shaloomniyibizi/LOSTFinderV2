@@ -148,3 +148,55 @@ export interface LiveMessage {
   link?: string;
   score?: number;
 }
+
+/* ---------- Dashboards (GET /stats/overview, /me/overview, /me/matches) ---------- */
+export interface Overview {
+  branch: string;
+  generated_at: string;
+  days: { date: string; lost: number; found: number }[];
+  last_7_days: number;
+  previous_7_days: number;
+  by_category: { category: string; count: number }[];
+  by_branch: { branch: string; lost: number; found: number }[];
+  lost_by_status: Record<ItemStatus, number>;
+  found_by_status: Record<ItemStatus, number>;
+  claims_by_stage: { PENDING: number; APPROVED: number; COLLECTED: number; REJECTED: number };
+  totals: {
+    items: number;
+    lost: number;
+    found: number;
+    open_lost: number;
+    found_in_custody: number;
+    returned: number;
+    returned_30_days: number;
+    pending_claims: number;
+    awaiting_handover: number;
+    pending_matches: number;
+    users: number;
+    return_rate: number;
+    avg_hours_to_handover: number | null;
+  };
+}
+
+export interface MyOverview {
+  open_lost: number;
+  matches: number;
+  active_claims: number;
+  ready_to_collect: number;
+  collected: number;
+  found_waiting: number;
+  returned_to_me: number;
+  claims_on_my_items: number;
+  lost_by_status: Record<ItemStatus, number>;
+  reports: number;
+}
+
+export interface MyMatch {
+  id: string;
+  score: number;
+  created_at: string;
+  side: ItemType; // which item of the pair is the user's
+  lost: Item;
+  found: Item;
+  reasons: { label: string; points: number }[];
+}

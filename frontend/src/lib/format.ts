@@ -17,6 +17,7 @@ export function timeAgo(iso: string): string {
 
 export function capitalize(s: string | null | undefined): string {
   if (!s) return "";
+  if (s === "id card") return "ID card";
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
@@ -24,4 +25,24 @@ export function todayIso(): string {
   const d = new Date();
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 10);
+}
+
+export function shortDay(iso: string): string {
+  return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { month: "short", day: "2-digit" }).replace(/(\d+) (\w+)/, "$2 $1");
+}
+
+export function greeting(): string {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+/** "2 days, 3 hours" style duration since a moment. */
+export function waitingFor(iso: string): string {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"}`;
+  const d = Math.floor(h / 24);
+  const rest = h % 24;
+  return `${d} day${d === 1 ? "" : "s"}${rest ? `, ${rest} hour${rest === 1 ? "" : "s"}` : ""}`;
 }

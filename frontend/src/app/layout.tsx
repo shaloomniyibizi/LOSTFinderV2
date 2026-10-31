@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import BranchDownBanner from "@/components/BranchDownBanner";
-import Footer from "@/components/Footer";
-import Navbar from "@/components/Navbar";
+import AppShell from "@/components/layout/AppShell";
 import Toaster from "@/components/Toaster";
 import { AppProvider } from "@/lib/app-context";
+import { AuthModalProvider } from "@/lib/auth-modal";
+import { CountsProvider } from "@/lib/counts";
 import { NotificationsProvider } from "@/lib/notifications";
+import { THEME_SCRIPT, ThemeProvider } from "@/lib/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,17 +16,23 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body className="flex min-h-screen flex-col">
-        <AppProvider>
-          <NotificationsProvider>
-            <Navbar />
-            <BranchDownBanner />
-            <Toaster />
-            <main className="flex-1">{children}</main>
-            <Footer />
-          </NotificationsProvider>
-        </AppProvider>
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
+      <body>
+        <ThemeProvider>
+          <AppProvider>
+            <NotificationsProvider>
+              <CountsProvider>
+                <AuthModalProvider>
+                  <AppShell>{children}</AppShell>
+                  <Toaster />
+                </AuthModalProvider>
+              </CountsProvider>
+            </NotificationsProvider>
+          </AppProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

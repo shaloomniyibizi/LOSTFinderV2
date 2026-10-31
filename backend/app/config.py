@@ -49,7 +49,8 @@ class Settings:
     branch_name: str = os.getenv("BRANCH_NAME", "Campus")
 
     # This branch's OWN database. A branch never connects to another branch's database.
-    database_url: str = os.getenv("DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/branch_a")
+    database_url: str = os.getenv(
+        "DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/branch_a")
 
     # Login tokens (JWT). MUST be the same secret on every branch.
     jwt_secret: str = os.getenv("JWT_SECRET", DEV_JWT_SECRET)
@@ -62,12 +63,14 @@ class Settings:
     # Photo storage: "local", "cloudinary" or "seaweedfs". Empty = choose automatically
     # (Cloudinary if CLOUDINARY_URL is set, SeaweedFS if SEAWEEDFS_FILER_URL is set, otherwise local folder).
     photo_storage: str = os.getenv("PHOTO_STORAGE", "")
-    cloudinary_url: str = os.getenv("CLOUDINARY_URL", "")  # cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+    # cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+    cloudinary_url: str = os.getenv("CLOUDINARY_URL", "")
     seaweedfs_filer_url: str = os.getenv("SEAWEEDFS_FILER_URL", "")
     photo_dir: str = os.getenv("PHOTO_DIR", "./photos")
 
     # Web front end address (allowed to call this API from the browser)
-    frontend_origins: str = os.getenv("FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    frontend_origins: str = os.getenv(
+        "FRONTEND_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
 
     # First admin account, created automatically on startup if it doesn't exist
     admin_email: str = os.getenv("ADMIN_EMAIL", "admin@lostfound.local")
@@ -80,11 +83,16 @@ class Settings:
     match_threshold: int = int(os.getenv("MATCH_THRESHOLD", "60"))
 
     # Reliability (Phase 5)
-    heartbeat_seconds: float = float(os.getenv("HEARTBEAT_SECONDS", "5"))    # how often peers are checked
-    heartbeat_misses: int = int(os.getenv("HEARTBEAT_MISSES", "3"))          # missed checks before "down"
-    queue_retry_seconds: float = float(os.getenv("QUEUE_RETRY_SECONDS", "3"))  # queued claims retry interval
-    resync_minutes: float = float(os.getenv("RESYNC_MINUTES", "5"))          # periodic anti-entropy sync
-    background_tasks: bool = os.getenv("BACKGROUND_TASKS", "1") == "1"       # 0 in tests
+    # how often peers are checked
+    heartbeat_seconds: float = float(os.getenv("HEARTBEAT_SECONDS", "5"))
+    # missed checks before "down"
+    heartbeat_misses: int = int(os.getenv("HEARTBEAT_MISSES", "3"))
+    queue_retry_seconds: float = float(
+        os.getenv("QUEUE_RETRY_SECONDS", "3"))  # queued claims retry interval
+    # periodic anti-entropy sync
+    resync_minutes: float = float(os.getenv("RESYNC_MINUTES", "5"))
+    background_tasks: bool = os.getenv(
+        "BACKGROUND_TASKS", "1") == "1"       # 0 in tests
 
 
 settings = Settings()
@@ -92,6 +100,8 @@ settings = Settings()
 
 def warn_about_dev_secrets() -> None:
     if settings.jwt_secret == DEV_JWT_SECRET:
-        log.warning("JWT_SECRET is the insecure development default. Set it in your .env file.")
+        log.warning(
+            "JWT_SECRET is the insecure development default. Set it in your .env file.")
     if settings.admin_password == DEV_ADMIN_PASSWORD:
-        log.warning("ADMIN_PASSWORD is the default 'admin123'. Set it in your .env file.")
+        log.warning(
+            "ADMIN_PASSWORD is the default 'admin123'. Set it in your .env file.")
