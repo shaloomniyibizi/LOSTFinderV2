@@ -120,6 +120,7 @@ def my_items(db: Session = Depends(get_db), user: User = Depends(get_current_use
 
 @router.get("/{item_id}", response_model=ItemOut)
 def get_item(item_id: uuid.UUID, db: Session = Depends(get_db)):
+    """One item (this branch's copy). Public."""
     return _get_item_or_404(db, item_id)
 
 
@@ -220,6 +221,7 @@ def delete_item(
     db: Session = Depends(get_db),
     _admin: User = Depends(require_roles(Role.admin)),
 ):
+    """Delete an item (admin only, at its home branch). The other branches delete their copies."""
     item = _get_item_or_404(db, item_id)
     _ensure_home_branch(item)
     record_event(db, "item.deleted", {"id": str(item.id), "version": item.version + 1})

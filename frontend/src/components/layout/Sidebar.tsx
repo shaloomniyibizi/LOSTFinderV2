@@ -2,7 +2,7 @@
 
 import {
   Activity, Bell, CirclePlus, ClipboardCheck, FileText, LayoutDashboard, Link2, Package,
-  PackageCheck, Search, ShieldCheck, SquarePlus, UserRound, X, type LucideIcon,
+  PackageCheck, Search, ShieldCheck, SquarePlus, UserRound, UsersRound, X, type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -63,6 +63,9 @@ export default function Sidebar({ collapsed, mobileOpen, onClose }: { collapsed:
             { href: "/staff?tab=collect", label: "Awaiting handover", icon: PackageCheck, badge: { value: staffCollect, cls: "bg-blue-500 text-white" } },
           ],
         }]
+      : []),
+    ...(user?.role === "admin"
+      ? [{ title: "Administration", items: [{ href: "/admin/users", label: "User management", icon: UsersRound }] }]
       : []),
     { title: "Network", items: [{ href: "/status", label: "Network status", icon: Activity }] },
     {

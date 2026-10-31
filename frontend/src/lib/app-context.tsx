@@ -21,6 +21,8 @@ interface AppState {
   ready: boolean;
   login: (email: string, password: string) => Promise<User>;
   logout: () => void;
+  /** Store a changed profile (after the person edits their name or phone). */
+  updateUser: (u: User) => void;
   /** Call the API of the CURRENT branch (adds the login token automatically). */
   api: <T>(path: string, opts?: Parameters<typeof apiFetch>[2]) => Promise<T>;
 }
@@ -104,6 +106,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     writeStorage(AUTH_KEY, null);
   }, []);
 
+  const updateUser = useCallback((u: User) => {
+    setUser(u);
+    setToken((t) => {
+      if (t) writeStorage(AUTH_KEY, { token: t, user: u });
+      return t;
+    });
+  }, []);
+
   const api = useCallback(
     <T,>(path: string, opts: Parameters<typeof apiFetch>[2] = {}) =>
       apiFetch<T>(branch.url, path, { token, ...opts }),
@@ -111,8 +121,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ branch, setBranchId, user, token, ready, login, logout, api }),
-    [branch, setBranchId, user, token, ready, login, logout, api],
+    () => ({ branch, setBranchId, user, token, ready, login, logout, updateUser, api }),
+    [branch, setBranchId, user, token, ready, login, logout, updateUser, api],
   );
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

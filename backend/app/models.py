@@ -10,7 +10,7 @@ import enum
 import uuid
 from datetime import date, datetime, timezone
 
-from sqlalchemy import JSON, Date, DateTime, Enum, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, Date, DateTime, Enum, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -68,6 +68,11 @@ class User(Base):
     role: Mapped[Role] = mapped_column(_enum(Role), default=Role.user)
     branch_id: Mapped[str | None] = mapped_column(ForeignKey("branches.id"), nullable=True)  # staff only
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # Phase 6: accounts can be changed at any branch (by an admin or the person), so they carry a
+    # version like items do: the copy with the higher version wins (ties: the later updated_at).
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # False = disabled by an admin
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Item(Base):
@@ -126,7 +131,7 @@ class OutboxEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)  # keeps send order
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid, default=uuid.uuid4, unique=True)
-    event_type: Mapped[str] = mapped_column(String(40))  # item.created, item.updated, item.deleted, user.created
+    event_type: Mapped[str] = mapped_column(String(40))  # item.created, item.updated, item.deleted, user.created, user.updated
     payload: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)

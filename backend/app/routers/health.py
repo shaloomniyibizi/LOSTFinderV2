@@ -14,6 +14,7 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 def health(db: Session = Depends(get_db)):
+    """Is this branch up? Also checks its database and says where photos are stored."""
     try:
         db.execute(text("SELECT 1"))
         database = "ok"

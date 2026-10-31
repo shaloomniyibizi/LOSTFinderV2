@@ -24,8 +24,10 @@ These tests run against SQLite with the background threads switched off (`BACKGR
 | `test_matching.py` | Match scoring, deterministic match IDs, threshold |
 | `test_claims.py` | Claim flow, verification answer, two claims at once, forwarding to the home branch |
 | `test_reliability.py` | Heartbeat monitor, store-and-forward queue, snapshots and resync, internal token, same admin ID on every branch |
+| `test_stats.py` | Dashboard figures and the "why it matched" explanation |
+| `test_users.py` | User management: admin-only access, disable/enable (signs out everywhere), role rules, password reset, self-lockout protection, profile and password change, replication of account changes (higher version wins), automatic upgrade of an old database |
 
-**Result: 86 passed.**
+**Result: 100 passed.** Run them with `lostfinder test` (in a container) or `cd backend; python -m pytest -q`.
 
 ## 2. Replication lag
 

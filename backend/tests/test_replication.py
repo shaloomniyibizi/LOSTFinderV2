@@ -128,7 +128,7 @@ def test_user_registered_at_other_branch_can_log_in_here(client):
         "branch_id": None, "created_at": "2026-10-30T10:00:00+00:00",
     }
     assert apply("user.created", user) == "inserted"
-    assert apply("user.created", user) == "ignored: already exists"
+    assert apply("user.created", user) == "ignored: not newer"  # delivered twice: no change
     headers = login(client, "remote@example.com", "secret123")
     me = client.get("/auth/me", headers=headers).json()
     assert me["id"] == user["id"]

@@ -14,11 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 from .config import KNOWN_BRANCHES, settings, warn_about_dev_secrets
-from .database import Base, SessionLocal, engine
+from .database import Base, SessionLocal, engine, upgrade_schema
 from .models import Branch, Role, User
 from . import reliability, replication
 from .notifier import notifier
-from .routers import auth, branches, claims, health, items, live, photos, stats
+from .routers import auth, branches, claims, health, items, live, photos, stats, users
 from .routers import replication as replication_router
 from .security import hash_password
 
@@ -29,6 +29,9 @@ logging.getLogger("pika").setLevel(logging.CRITICAL)
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    added = upgrade_schema()
+    if added:
+        logging.getLogger("startup").info("database upgraded: added %s", ", ".join(added))
     with SessionLocal() as db:
         for b in KNOWN_BRANCHES:
             if db.get(Branch, b["id"]) is None:
@@ -61,7 +64,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=f"Lost & Found — Branch {settings.branch_id} ({settings.branch_name})",
     description="Distributed Lost and Found Property Management System — one branch node.",
-    version="0.5.0 (Phase 5)",
+    version="1.0.0",
     lifespan=lifespan,
 )
 
@@ -82,4 +85,5 @@ app.include_router(photos.router)
 app.include_router(claims.router)
 app.include_router(live.router)
 app.include_router(stats.router)
+app.include_router(users.router)
 app.include_router(replication_router.router)

@@ -1,7 +1,17 @@
 # LostFinder: Distributed Lost and Found Property Management System
 
-Final project for the Distributed Systems module.
-**Phase 5: Reliability and testing.** Three branches, each with its own PostgreSQL database, kept in sync through RabbitMQ. The system includes shared photo storage, a Next.js + Tailwind web app, automatic matching, live notifications and safe claims. It also **keeps working when a branch, RabbitMQ or a database fails**, and it comes with automated failure, consistency, replication-lag and load tests (results in [`docs/TESTING.md`](docs/TESTING.md)).
+Final project for the Distributed Systems module. **Version 1.0
+
+Three branches, each with its own PostgreSQL database, kept in sync through RabbitMQ. The system includes shared photo storage, a Next.js + Tailwind web app, automatic matching, live notifications and safe claims. It also **keeps working when a branch, RabbitMQ or a database fails**, and it comes with automated failure, consistency, replication-lag and load tests (results in [`docs/TESTING.md`](docs/TESTING.md)). Admins manage every account from the web app.
+
+| Document | For |
+|---|---|
+| [User guide](docs/USER_GUIDE.md) | how members, staff and admins use the system |
+| [Architecture](docs/ARCHITECTURE.md) | components, data ownership, replication, claims, fault tolerance (with diagrams) |
+| [API reference](docs/API.md) | every endpoint (generated from the code; also live at `http://localhost:8001/docs`) |
+| [Testing](docs/TESTING.md) | test strategy and results |
+| [Presentation demo](docs/DEMO_SCRIPT.md) | a 12-minute run-through for the final presentation |
+| [Changelog](CHANGELOG.md) | what each phase added |
 
 Everything runs on your own computer and nothing costs money. The only optional online part is Cloudinary's free plan for photos. All passwords and secrets live in a private **`.env`** file.
 
@@ -37,17 +47,25 @@ Use only letters, digits, `-` and `_` in the passwords. To make a strong random 
 
 **2. Start everything** (databases, RabbitMQ, the three branches and the web app)
 ```powershell
-docker compose down -v        # only when upgrading from an earlier phase: the database tables changed
+lostfinder start              # macOS/Linux: ./lostfinder.sh start
+```
+The first build takes a few minutes (it downloads Python and Node.js packages). The command waits until every part is healthy, shows a status list and opens the browser.
+
+<details><summary>Without the script</summary>
+
+```powershell
 docker compose up --build
 ```
-The first build takes a few minutes (it downloads Python and Node.js packages). Wait until each branch shows `consumer listening on branch-A` (and `branch-B`, `branch-C`). A few `retrying in 3s` warnings at the start are normal while RabbitMQ boots.
+Wait until each branch shows `consumer listening on branch-A` (and `branch-B`, `branch-C`). A few `retrying in 3s` warnings at the start are normal while RabbitMQ boots.
+</details>
+
+Coming from an earlier phase? Your data is kept: the branches add the new database columns by themselves when they start.
 
 **3. Open the web app:** **http://localhost:3000**
 
-**4. Demo data with pictures (optional, second terminal)**
+**4. Demo data with pictures (optional)**
 ```powershell
-pip install -r scripts/requirements.txt
-python scripts/seed_demo.py
+lostfinder seed               # or: pip install -r scripts/requirements.txt; python scripts/seed_demo.py
 ```
 It creates 38 lost and found reports with a picture each, 8 members, a staff account for each branch, possible matches, and 10 claims in every state (waiting, approved, handed over, rejected). It also spreads the report dates over the last 18 days so the dashboard charts show a trend.
 
@@ -89,6 +107,25 @@ The browser talks to the branches directly through `localhost:8001`, `:8002` and
 
 ---
 
+### All `lostfinder` commands
+Windows: `lostfinder <command>` in the project folder (runs `lostfinder.cmd`). macOS/Linux: `./lostfinder.sh <command>`.
+
+| Command | What it does |
+|---|---|
+| `start` | build and start everything, wait until healthy, open the browser |
+| `stop` | stop everything (data is kept) |
+| `status` | running containers and each branch's health |
+| `seed` | add the demo data |
+| `logs [service]` | follow the logs, e.g. `lostfinder logs branch-a` |
+| `test` | run the 100 back-end tests in a temporary container (no Python needed) |
+| `check` | are the three databases identical? |
+| `failure-test` | crash a branch, stop RabbitMQ, wipe a database, and time the recovery |
+| `backup` | save the three databases to `backups\<date>\` |
+| `restore <folder>` | put a backup back (asks first) |
+| `reset` | delete all data and start from empty (asks first) |
+
+---
+
 ## Private settings (`.env`)
 
 Nothing secret is written in the code or in `docker-compose.yml`. Docker Compose reads them from `.env`:
@@ -107,6 +144,39 @@ Nothing secret is written in the code or in `docker-compose.yml`. Docker Compose
 - `.env` is listed in `.gitignore`, so it never goes to GitHub. Share `.env.example`, never `.env`.
 - Running a branch without Docker? Copy `backend/.env.example` to `backend/.env`; the branch reads it at start-up.
 - The branches log a warning if they start with the development default secret or admin password.
+
+---
+
+## What's new in Phase 6: delivery and user management
+
+### User management (admins)
+Sidebar → **Administration → User management**:
+- Every account with its role, branch (staff), number of reports and claims, and status. Search and filter by role or status.
+- **Add user**: member, staff for a branch, or admin.
+- **Edit**: name, phone, role, branch.
+- **Reset password**: suggests a new password to give to the person.
+- **Disable / Enable**: a disabled person can't sign in at any branch and is signed out immediately; their reports and claims stay.
+- Safety: you can't disable yourself or remove your own admin role, and there is always at least one active admin.
+
+Everyone can change their own name, phone and password in **My profile**.
+
+**How it works in the distributed system:** accounts can be changed at any branch, so each account now has a **version**. Every change increases it and is sent to the other branches as a `user.updated` event. A branch keeps the copy with the higher version; if two branches changed the same account at the same moment, the later change wins. Resync snapshots include accounts too, so a branch that was offline catches up.
+
+| Method | Path | Who | What |
+|---|---|---|---|
+| GET | `/users?q=&role=&active=` | admin | Accounts with report and claim counts |
+| GET | `/users/{id}` | admin | One account |
+| PATCH | `/users/{id}` | admin | Change name, phone, role, branch, or `is_active` |
+| POST | `/users/{id}/password` | admin | Set a new password |
+| PATCH | `/auth/me` | signed in | Change your own name or phone |
+| POST | `/auth/me/password` | signed in | Change your own password |
+
+### Delivery
+- **`lostfinder` command** for Windows, macOS and Linux (table above).
+- **Health checks** for the branches and the web app, so `start` knows when everything is ready.
+- **Backup and restore** of the three databases.
+- **Automatic database upgrade:** branches add new columns on start-up, so moving to 1.0 keeps your data.
+- **Documentation:** [user guide](docs/USER_GUIDE.md), [architecture](docs/ARCHITECTURE.md), [API reference](docs/API.md), [presentation demo](docs/DEMO_SCRIPT.md), [changelog](CHANGELOG.md).
 
 ---
 
@@ -180,7 +250,7 @@ The scripts read `JWT_SECRET` from your `.env`. The failure test stops and start
 
 | Result (development machine) | |
 |---|---|
-| Automated tests | 89 passed |
+| Automated tests | 100 passed |
 | Failure test | 16 of 16 checks passed. Crash detected in 11.6 s; queued claim delivered 4.6 s after restart; consistent again 5.1 s after restart; wiped database rebuilt in 1.4 s |
 | Replication lag | median 9.1 ms, p95 18.1 ms, 0 lost |
 | Load (60 users) | searches: avg 46 ms over 3 branches vs 151 ms on 1 branch, 0 failures |
@@ -287,9 +357,16 @@ Pairs scoring **60 or more** become *possible matches*, shown on both items' pag
 ```
 lostfinder/
 ├── .env.example              # copy to .env: all private settings
+├── lostfinder.cmd            # Windows: lostfinder start / stop / seed / test / backup …
+├── lostfinder.sh             # the same for macOS and Linux
+├── CHANGELOG.md
 ├── docker-compose.yml        # 3 databases + 3 branches + RabbitMQ + web app (+ optional SeaweedFS)
 ├── docs/
-│   ├── TESTING.md            # test strategy and results (Phase 5)
+│   ├── ARCHITECTURE.md       # how it works, with diagrams
+│   ├── USER_GUIDE.md         # for members, staff and admins
+│   ├── API.md                # endpoint reference (scripts/make_api_docs.py)
+│   ├── DEMO_SCRIPT.md        # presentation run-through
+│   ├── TESTING.md            # test strategy and results
 │   ├── results/              # failure-test report, replication lag and load-test CSVs
 │   └── screenshots/          # screenshots for your report
 ├── loadtest/locustfile.py    # Locust load test
@@ -308,12 +385,13 @@ lostfinder/
 │   │   ├── models.py         # items, users, claims, matches, outbox
 │   │   ├── replication.py    # outbox, publisher, consumer, applying events
 │   │   ├── reliability.py    # heartbeats, queued claims, snapshots and resync
+│   │   ├── database.py       # connection + automatic upgrade of older databases
 │   │   ├── matching.py       # scoring and deterministic matches
 │   │   ├── notifier.py       # WebSocket connections and pushing messages
 │   │   ├── announce.py       # notification texts
 │   │   ├── storage.py        # photos: shared folder, Cloudinary, SeaweedFS
 │   │   └── routers/          # health, auth, branches, items, photos, claims, live (ws + activity), replication, stats
-│   └── tests/                # 89 automated tests
+│   └── tests/                # 100 automated tests
 └── frontend/                 # Next.js + Tailwind web app (Dockerfile builds the `web` container)
     └── src/
         ├── app/              # /, dashboard, lost, found, search, report, items/[id], matches, claims, my-items,
@@ -324,9 +402,11 @@ lostfinder/
 
 ## Tests
 ```powershell
+lostfinder test              # 100 passed, in a container (no local Python needed)
+# or, with Python installed:
 cd backend
 pip install -r requirements.txt
-python -m pytest -q          # 89 passed (no PostgreSQL, RabbitMQ or internet needed)
+python -m pytest -q          # no PostgreSQL, RabbitMQ or internet needed
 cd ../frontend
 npm run lint                 # TypeScript check
 npm run build                # production build
@@ -340,13 +420,15 @@ npm run build                # production build
 - **`port is already allocated` for 3000:** `npm run dev` (or another program) is already using port 3000. Stop it, or run `docker compose stop web` and keep using `npm run dev`.
 - **No pop-ups:** the bell icon is crossed out while the WebSocket is reconnecting. Check that the branch you selected is online.
 - **Claim says "queued":** the item's home branch is offline. Start it (`docker compose start branch-b`) and the claim is delivered within a few seconds.
-- **`relation "queued_requests" does not exist`:** you upgraded from Phase 4 without resetting. Run `docker compose down -v`, then `docker compose up --build`.
+- **`relation "queued_requests" does not exist`:** you upgraded from Phase 4 without resetting. Run `lostfinder reset`, then `lostfinder start`.
+- **`lostfinder` is not recognized:** run it from the project folder (where `lostfinder.cmd` is). In PowerShell, type `.\lostfinder start`.
+- **"This account has been disabled":** an admin disabled it; another admin can enable it in User management.
 - **Scripts say `JWT_SECRET` is missing:** run them from the project folder (where `.env` is).
 - **`failure_test.py` stops at a docker command:** the whole system must have been started with `docker compose up` from the project folder.
 - **Photo upload fails:** the reason is shown under the photo. *Cloudinary refused … Invalid Signature* means `CLOUDINARY_URL` is mistyped.
 
 ## Next steps
-All five phases are done. For the final report:
-- Run `docs/TESTING.md`'s tests on your own computer and use your own numbers.
-- Take screenshots of **/status** during a failure, the queued claim, and the failure-test report.
-- Ideas for future work: HTTPS and rate limiting, a real search engine (e.g. Meilisearch) for fuzzy matching, image similarity for matching photos, more than one replica per branch, and running it across several computers on a LAN.
+All six phases are done; this is version 1.0. For the final report and presentation:
+- Follow [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for the live demo.
+- Run the tests in [docs/TESTING.md](docs/TESTING.md) on your own computer and use your own numbers.
+- Ideas for future work: HTTPS and rate limiting, a real search engine (e.g. Meilisearch) for fuzzy matching, image similarity for matching photos, more than one replica per branch, running across several computers on a LAN, and an audit log of admin actions.

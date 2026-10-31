@@ -11,4 +11,5 @@ router = APIRouter(tags=["branches"])
 
 @router.get("/branches", response_model=list[BranchOut])
 def list_branches(db: Session = Depends(get_db)):
+    """The three branch offices."""
     return db.scalars(select(Branch).order_by(Branch.id)).all()

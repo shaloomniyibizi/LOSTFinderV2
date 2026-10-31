@@ -356,7 +356,7 @@ function StaffDashboard({ data }: { data: Overview | null }) {
           { icon: Link2, tint: "amber", label: "Pending match suggestions", value: t?.pending_matches ?? "–" },
           { icon: Percent, tint: "green", label: "Return rate (found items)", value: t ? `${t.return_rate}%` : "–" },
           { icon: Hourglass, tint: "violet", label: "Avg. claim to handover", value: t?.avg_hours_to_handover != null ? `${t.avg_hours_to_handover} h` : "–" },
-          ...(user?.role === "admin" ? [{ icon: Users, tint: "blue" as Tint, label: "Registered users", value: t?.users ?? "–" }] : []),
+          ...(user?.role === "admin" ? [{ icon: Users, tint: "blue" as Tint, label: "Registered users", value: t?.users ?? "–", href: "/admin/users" }] : []),
         ]} />
       </div>
 

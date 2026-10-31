@@ -31,6 +31,38 @@ class UserOut(BaseModel):
     role: Role
     branch_id: str | None
     created_at: datetime
+    is_active: bool = True
+
+
+class UserAdminOut(UserOut):
+    """What an admin sees in the user list."""
+    version: int = 1
+    updated_at: datetime | None = None
+    reports: int = 0
+    claims: int = 0
+
+
+class UserAdminUpdate(BaseModel):
+    """Admin edits an account. Send only what changes."""
+    full_name: str | None = Field(default=None, min_length=2, max_length=120)
+    phone: str | None = Field(default=None, max_length=30)
+    role: Role | None = None
+    branch_id: str | None = None
+    is_active: bool | None = None
+
+
+class PasswordReset(BaseModel):
+    password: str = Field(min_length=6, max_length=72)
+
+
+class ProfileUpdate(BaseModel):
+    full_name: str | None = Field(default=None, min_length=2, max_length=120)
+    phone: str | None = Field(default=None, max_length=30)
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6, max_length=72)
 
 
 class TokenOut(BaseModel):
